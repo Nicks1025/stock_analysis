@@ -1,0 +1,325 @@
+# StockSense AI — Frontend ↔ Backend Wiring Prompt
+
+## Purpose
+This document defines every contract point between the React frontend and the Node.js backend. Follow this when wiring them together. No frontend component should hardcode URLs or call external APIs directly.
+
+---
+
+## API Base URL Configuration
+
+### Frontend (`.env`)
+```
+VITE_API_BASE_URL=http://localhost:5000/api/v1
+```
+
+### `services/apiClient.js` (Frontend)
+```js
+import axios from 'axios'
+import { useAuthStore } from '../store/authStore'
+
+const apiClient = axios.create({
+  baseURL: import.meta.env.VITE_API_BASE_URL,
+  timeout: 15000,
+  headers: { 'Content-Type': 'application/json' },
+})
+
+// Attach token
+apiClient.interceptors.request.use((config) => {
+  const token = useAuthStore.getState().accessToken
+  if (token) config.headers.Authorization = `Bearer ${token}`
+  return config
+})
+
+// Handle 401 → refresh
+let isRefreshing = false
+let failedQueue = []
+
+apiClient.interceptors.response.use(
+  (res) => res.data,    // ← unwrap so services get data directly
+  async (error) => {
+    const original = error.config
+    if (error.response?.status === 401 && !original._retry) {
+      original._retry = true
+      if (isRefreshing) {
+        return new Promise((resolve, reject) =>
+          failedQueue.push({ resolve, reject })
+        ).then(token => {
+          original.headers.Authorization = `Bearer ${token}`
+          return apiClient(original)
+        })
+      }
+      isRefreshing = true
+      try {
+        const refreshToken = useAuthStore.getState().refreshToken
+        const res = await axios.post(`${import.meta.env.VITE_API_BASE_URL}/auth/refresh-token`, { refreshToken })
+        const newToken = res.data.data.accessToken
+        useAuthStore.getState().updateTokens(newToken)
+        failedQueue.forEach(p => p.resolve(newToken))
+        failedQueue = []
+        original.headers.Authorization = `Bearer ${newToken}`
+        return apiClient(original)
+      } catch {
+        failedQueue.forEach(p => p.reject())
+        useAuthStore.getState().logout()
+        window.location.href = '/login'
+      } finally {
+        isRefreshing = false
+      }
+    }
+    return Promise.reject(error.response?.data || error)
+  }
+)
+
+export default apiClient
+```
+
+---
+
+## Auth Flow Wiring
+
+### Register
+- **Frontend:** `pages/Register/index.jsx` → form submit → `authService.register(payload)`
+- **Service:** `POST /auth/register` with `{ name, email, password, phone, country_code }`
+- **Response:** `{ success: true, data: { accessToken, refreshToken, user } }`
+- **On success:** store tokens in `authStore`, redirect to `/dashboard`
+- **OTP step:** after register response → show OTP modal → `authService.verifyOtp({ userId, otp, type: 'email_verify' })`
+
+### Login
+- **Frontend:** `pages/Login/index.jsx` → `authService.login({ email, password })`
+- **Endpoint:** `POST /auth/login`
+- **Response:** `{ data: { accessToken, refreshToken, user: { id, name, email, avatar } } }`
+- **On 429:** show "Too many attempts" with retry-after from header
+
+### Google Login
+- **Frontend:** On Google button click → `window.google.accounts.id.initialize(...)` → get `credential` (idToken)
+- **Service:** `authService.googleLogin({ idToken: credential })`
+- **Endpoint:** `POST /auth/google`
+- **Backend:** verify with `google-auth-library` → find/create user → return same tokens
+
+### Token Refresh
+- **Triggered:** automatically by `apiClient` interceptor on 401
+- **Service:** `POST /auth/refresh-token` with `{ refreshToken }`
+- **Response:** `{ data: { accessToken } }`
+- **Store update:** `authStore.updateTokens(newAccessToken)`
+
+### Logout
+- **Frontend:** user clicks logout → `authService.logout()` → `POST /auth/logout`
+- **Backend:** delete refresh token from DB
+- **Frontend:** clear authStore + localStorage → redirect to `/login`
+
+---
+
+## Stock Data Wiring
+
+### Global Search (Topbar)
+- `STextField` with `debounce={400}` and `onSearch`
+- `onSearch` calls `stockService.searchStocks(query)` → `GET /stocks/search?q=`
+- Result: dropdown list of `{ symbol, company_name, logo_url }`
+- On select: navigate to `/stocks/${symbol}`
+
+### Live Indices (Home page)
+- `useEffect` on mount → `stockService.getLiveIndices()` → `GET /stocks/indices/live`
+- `setInterval(fetch, 30000)` — poll every 30s
+- `clearInterval` on unmount
+- Response: `[{ name, symbol, value, change, changePercent }]`
+
+### Stock Detail Page (`/stocks/:symbol`)
+- On mount, call all in parallel via `Promise.all([])`:
+  - `stockService.getQuote(symbol)` → `GET /stocks/:symbol/quote`
+  - `stockService.getValuation(symbol)` → `GET /stocks/:symbol/valuation`
+  - `stockService.getFinancials(symbol)` → `GET /stocks/:symbol/financials`
+  - `stockService.getStockNews(symbol, { page:1, limit:10 })` → `GET /stocks/:symbol/news`
+  - `stockService.getPeers(symbol)` → `GET /stocks/:symbol/peers`
+  - `stockService.getAiAnalysis(symbol)` → `GET /stocks/:symbol/analysis`
+
+### Price Chart
+- On timeframe button click → `stockService.getHistory(symbol, { period, interval })`
+- `GET /stocks/:symbol/history?period=1mo&interval=1d`
+- Response: `[{ date, open, high, low, close, volume }]`
+- Render with Recharts `<ComposedChart>` (line + volume bar)
+
+---
+
+## Screener Wiring
+
+### `pages/StockScreener/index.jsx`
+- Filter state managed in `screenerStore` (Zustand)
+- On filter change OR sort change OR search → call `screenerService.screen(filters, pagination, sort, search)`
+- `POST /screener` with body:
+  ```json
+  {
+    "filters": { "pe_max": 30, "roe_min": 15, "sector": "IT", "stock_type": ["dividend"] },
+    "pagination": { "page": 1, "limit": 10 },
+    "sort": { "key": "market_cap_cr", "order": "DESC" },
+    "search": "reliance"
+  }
+  ```
+- `SDataTable` `onSort` → update sort state → trigger new fetch
+- `SDataTable` `onSearch` → debounced 400ms → update search state → trigger new fetch
+- `SDataTable` `onPaginationChange` → update page/limit → trigger new fetch
+
+---
+
+## Portfolio Wiring
+
+### Holdings Table
+- `portfolioService.getHoldings({ page, limit, sort, search })` → `GET /portfolio/holdings`
+- Response includes live P&L (backend fetches current price from Redis cache)
+- `SDataTable` with columns: Symbol | Company | Qty | Avg Price | Current Price | P&L | P&L%
+
+### Add Transaction (Buy/Sell)
+- Modal with `STextField`, `SDatePicker`, `SDropdown` (type: BUY/SELL)
+- Submit → `portfolioService.addTransaction(data)` → `POST /portfolio/transactions`
+- Backend recomputes `portfolio_holdings` (avg price, qty) after each transaction
+
+### Rebalance Suggestion
+- `portfolioService.getRebalanceSuggestion()` → `GET /portfolio/rebalance`
+- Backend calls Gemini with holdings + fundamentals context
+- Response: `{ suggestions: [{ type: 'sell'|'buy'|'hold', symbol, reason, target_allocation_pct }] }`
+
+---
+
+## News Wiring
+
+### News Page
+- `newsService.getNews(filters, pagination)` → `GET /news`
+- Query params: `?sector=IT&sentiment=positive&from=2024-01-01&search=highway&page=1&limit=20`
+- `SDataTable` with: Headline | Source | Sentiment (chip) | Impact | Date | Related Stocks
+
+### Stock-level News
+- On StockDetail page, news section calls `GET /stocks/:symbol/news?page=1&limit=5`
+- Shows latest 5 news with "View All" link to `/news?symbol=RELIANCE`
+
+---
+
+## Mutual Fund Wiring
+
+### Explore Funds
+- `mutualFundService.explore(filters, pagination)` → `GET /mutual-funds`
+- Filters: category, risk_level, amc, min_returns_1y
+- `SDataTable` columns: Fund Name | Category | Risk | Nav | Returns 1Y/3Y/5Y | AUM | Expense Ratio
+
+### My Investments
+- `mutualFundService.getMyInvestments()` → `GET /mutual-funds/investments`
+- Response: invested amount, current value, XIRR, units, current NAV
+
+---
+
+## Watchlist Wiring
+
+- On load: `watchlistService.getAll()` → `GET /watchlists` → returns all watchlists with items + live prices
+- Add stock to watchlist: `POST /watchlists/:id/stocks` with `{ stock_id }`
+- Live prices: poll `GET /stocks/:symbol/quote` every 60s for watchlist symbols
+
+---
+
+## Alert Wiring
+
+- Create alert: `alertService.createAlert({ stock_id, condition, target_value })` → `POST /alerts`
+- List alerts: `GET /alerts` → show in settings or watchlist page
+- Backend Bull job checks alerts every 60s → sends email via SendGrid if triggered
+
+---
+
+## Error Handling (Frontend)
+
+Every service call is wrapped in try/catch in the calling component/store action:
+
+```js
+try {
+  const data = await stockService.getQuote(symbol)
+  setQuote(data)
+} catch (err) {
+  // err is { success: false, error: { code, message } } from backend
+  enqueueSnackbar(err.error?.message || 'Something went wrong', { variant: 'error' })
+}
+```
+
+For 401 errors — handled silently by apiClient interceptor (refresh or logout).
+For 429 errors — show specific "rate limit" message.
+For 422/400 validation errors — show field-level errors if applicable.
+
+---
+
+## Real-Time Data Strategy
+
+Since WebSockets are not implemented in free tier, use polling:
+
+| Feature | Poll Interval | Condition |
+|---------|--------------|-----------|
+| Live Indices (Home) | 30s | Always on Home page |
+| Stock Quote (Detail) | 60s | While on StockDetail page |
+| Watchlist Prices | 60s | While Watchlist page is open |
+| Portfolio P&L | 2min | While Portfolio page is open |
+| Alert Check | Server-side | Bull job, every 60s |
+
+All polling uses `setInterval` started on component mount, cleared on unmount.
+
+---
+
+## Environment Variables Checklist
+
+### Frontend `.env`
+```
+VITE_API_BASE_URL=http://localhost:5000/api/v1
+VITE_GOOGLE_CLIENT_ID=<your-google-oauth-client-id>
+```
+
+### Backend `.env`
+```
+SUPABASE_URL=https://xxx.supabase.co
+SUPABASE_SERVICE_KEY=eyJ...
+REDIS_URL=redis://localhost:6379
+JWT_SECRET=<32-char-random>
+JWT_REFRESH_SECRET=<32-char-random>
+JWT_EXPIRES_IN=15m
+JWT_REFRESH_EXPIRES_IN=7d
+BCRYPT_SALT_ROUNDS=12
+SENDGRID_API_KEY=SG...
+SENDGRID_FROM_EMAIL=noreply@stocksense.ai
+GOOGLE_CLIENT_ID=<same as frontend>
+GOOGLE_CLIENT_SECRET=<google-oauth-secret>
+ALPHA_VANTAGE_KEY=<from alphavantage.co free>
+NEWS_API_KEY=<from newsapi.org free>
+GEMINI_API_KEY=<from ai.google.dev free>
+FRONTEND_URL=http://localhost:5173
+PORT=5000
+NODE_ENV=development
+```
+
+---
+
+## CORS Configuration (Backend)
+
+```js
+// config/cors.js
+const corsOptions = {
+  origin: process.env.FRONTEND_URL,
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+}
+```
+
+---
+
+## Free API Limits & Mitigation
+
+| API | Free Limit | Strategy |
+|-----|-----------|----------|
+| Yahoo Finance (yahoo-finance2) | Unofficial, no key | Cache aggressively, respect rate limits |
+| NewsAPI.org | 1000 req/day | Cache 5min, batch fetch, Bull job |
+| Alpha Vantage | 25 req/day | Use only for missing data, cache 24hr |
+| mfapi.in | Unlimited | Cache 1hr |
+| Google Gemini Flash | 15 RPM, 1M TPD | Cache AI analysis 24hr per stock |
+| NSE India (unofficial) | Unofficial | Cache 5min, set proper headers |
+
+---
+
+## Deployment Notes
+
+- Frontend: Vercel or Netlify (set `VITE_API_BASE_URL` to production backend URL)
+- Backend: Railway.app or Render.com free tier (set all env vars)
+- Redis: Upstash Redis free tier (replace `REDIS_URL`)
+- Database: Supabase free tier (500MB, plenty for initial launch)
+- Bull jobs: run in same Node.js process on backend server
