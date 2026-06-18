@@ -166,22 +166,27 @@ src/
 |   ├── permissionStore.js
 │
 ├── services/
-│   ├── apiClient.js          ← Axios instance, base URL, interceptors
+│   ├── apiClient.js            ← Axios instance, base URL, interceptors
 │   ├── authService.js
-│   ├── stockService.js
-│   ├── portfolioService.js
+│   ├── stockService.js         ← includes getMarketStatus, getFiiDii, getRecentlyViewed, markViewed
+│   ├── portfolioService.js     ← includes getDividendIncome
 │   ├── mutualFundService.js
 │   ├── newsService.js
 │   ├── watchlistService.js
-│   └── screenerService.js
-│   ├── alertService.js 
-│   ├── adminService.js
+│   ├── screenerService.js      ← includes getSaved, saveScreener, deleteScreener
+│   ├── alertService.js
+│   ├── adminService.js         ← includes getSystemHealth, getSyncStatus
 │   ├── calendarService.js
 │   ├── ipoService.js
 │   ├── goalService.js
 │   ├── taxService.js
-│   ├── notificationService.js
-│   └── comparisonService.js
+│   ├── earningsService.js
+│   ├── dividendService.js
+│   ├── comparisonService.js
+│   ├── calculatorService.js    ← SIP planner, DRIP planner (pure computation calls)
+│   ├── notificationService.js  ← includes getPreferences, updatePreferences
+│   ├── roleService.js
+│   └── permissionService.js
 │
 ├── utils/
 │   ├── rules.js              ← All reusable validation rules
@@ -207,8 +212,13 @@ src/
 ## Routing (AppRouter.jsx)
 
 - Public routes: `/`, `/login`, `/register`
-- Protected routes (require valid JWT in authStore): `/dashboard`, `/stocks/:symbol`, `/screener`, `/portfolio`, `/mutual-funds`, `/news`, `/watchlist`, `/settings`
+- Protected routes (require valid JWT in authStore):
+  `/dashboard`, `/stocks/:symbol`, `/screener`, `/screener/saved`, `/portfolio`, `/mutual-funds`, `/news`, `/watchlist`, `/settings`,
+  `/alerts`, `/economic-calendar`, `/dividend-calendar`, `/ipo`, `/earnings`, `/compare`, `/goals`, `/tax-reports`
+- Admin-only protected routes (require valid JWT + role `admin`):
+  `/admin`, `/roles`, `/permissions`
 - Auth guard: if no token in store → redirect to `/login`
+- Admin guard: if no admin role → redirect to `/dashboard`
 - After login → redirect to `/dashboard`
 - 404 → redirect to `/`
 
@@ -376,30 +386,85 @@ Used in:
 - Tender info
 - Economic Calendar
 - AI Summary
----
+
+### `SPermissionTree` — permission tree selector component
+Props:
+- `permissions` — array of `{ id, key, description, group, children[] }` (hierarchical)
+- `selected` — array of currently selected permission keys
+- `onChange` — `(selectedKeys: string[]) => void`
+- `readOnly` — boolean; if true, render as display only with no checkboxes
+
+Behaviour:
+- Renders permissions grouped by module (e.g. `stock.*`, `admin.*`, `portfolio.*`)
+- Expandable/collapsible groups
+- Checkboxes at leaf level; selecting a group checks all children
+- Used exclusively on `pages/Roles/index.jsx` to assign permissions to a role
+- On change: calls `onChange` with updated array of permission keys
 
 ## Store (Zustand)
 
 ### `authStore.js`
 ```js
-// State: accessToken, refreshToken, user (id, name, email, avatar), isAuthenticated
-// Actions: login(tokens, user), logout(), updateTokens(accessToken)
+// State: accessToken, refreshToken, user (id, name, email, avatar, roles), isAuthenticated
+// Actions: login(tokens, user), logout(), updateTokens(accessToken, refreshToken)
 // Persist: accessToken and refreshToken in localStorage via zustand/middleware/persist
 ```
 
 ### `stockStore.js`
 ```js
-// State: quotes{}, selectedStock{}, news[], searchResults[], liveIndices[]
-// Actions: setQuote(symbol, data), setSelectedStock(data), setNews(data), setIndices(data)
+// State: quotes{}, selectedStock{}, news[], searchResults[], liveIndices[], marketStatus{}
+// Actions: setQuote(symbol, data), setSelectedStock(data), setNews(data), setIndices(data), setMarketStatus(data)
 ```
 
 ### `portfolioStore.js`
 ```js
-// State: holdings[], summary{}, rebalanceSuggestions[]
-// Actions: setHoldings, setSummary, setRebalanceSuggestions
+// State: holdings[], summary{}, rebalanceSuggestions[], dividendIncome{}
+// Actions: setHoldings, setSummary, setRebalanceSuggestions, setDividendIncome
 ```
 
-### `mutualFundStore.js`, `watchlistStore.js`, `newsStore.js` — follow same pattern
+### `screenerStore.js`
+```js
+// State: filters{}, pagination{ page:1, limit:10 }, sort{ key:'', order:'DESC' }, search:'', results[], savedScreeners[]
+// Actions: setFilters(filters), resetFilters(), setPagination, setSort, setSearch, setResults, setSavedScreeners
+```
+
+### `watchlistStore.js`
+```js
+// State: watchlists[], selectedWatchlist{}, notes[], tags[]
+// Actions: setWatchlists, setSelected, setNotes, setTags, addNote, addTag
+```
+
+### `notificationStore.js`
+```js
+// State: notifications[], unreadCount: 0, preferences{ email_enabled, push_enabled, price_alerts, earnings_alerts, dividend_alerts, news_alerts }
+// Actions: setNotifications(data), setUnreadCount(n), markRead(id), markAllRead(), setPreferences(prefs)
+```
+
+### `calendarStore.js`
+```js
+// State: economicEvents[], dividendEvents[], earningsEvents[], filters{ impact:'', country:'India', dateFrom:'', dateTo:'' }
+// Actions: setEconomicEvents, setDividendEvents, setEarningsEvents, setFilters, resetFilters
+```
+
+### `goalStore.js`
+```js
+// State: goals[], selectedGoal: null
+// Actions: setGoals(data), addGoal(goal), updateGoal(id, data), removeGoal(id), setSelectedGoal(goal)
+```
+
+### `adminStore.js`
+```js
+// State: users[], systemStats{}, auditLogs[], failedJobs[], syncStatus{}, systemHealth{}
+// Actions: setUsers, setSystemStats, setAuditLogs, setFailedJobs, setSyncStatus, setSystemHealth
+```
+
+### `roleStore.js`
+```js
+// State: roles[], permissions[], permissionTree[]
+// Actions: setRoles(data), setPermissions(data), setPermissionTree(data)
+```
+
+### `mutualFundStore.js`, `newsStore.js` — follow same pattern
 
 ---
 
@@ -465,8 +530,112 @@ Used in:
 - Auth required
 - Manage watchlists, add/remove stocks, live price updates, alerts configuration
 
+### `pages/Alerts/index.jsx`
+- Auth required
+- Registers: alertStore (use notificationStore for unread count)
+- Title: "Price Alerts"
+- Renders: SDataTable of all price alerts (symbol, condition, target value, status, triggered_at)
+- Top-right: Create Alert button → SModal with symbol search (STextField debounced), condition SDropdown (above/below/percent_change), target value STextField
+- Active / Triggered tabs to filter
+- Delete action per row
+
+### `pages/EconomicCalendar/index.jsx`
+- Auth required
+- Registers: calendarStore
+- Title: "Economic Calendar"
+- Filters: SDatePicker (date range), SDropdown (impact: high/medium/low), SDropdown (country: India/US/Global)
+- Renders: SDataTable with columns: Event | Country | Impact (SChip colored) | Date/Time | Actual | Forecast | Previous | Affected Sectors
+- High-impact events highlighted with red left border
+- `SDataFreshness` badge showing last sync from RBI/FRED
+
+### `pages/DividendCalendar/index.jsx`
+- Auth required
+- Registers: calendarStore
+- Title: "Dividend Calendar"
+- Filters: SDropdown (month, year), STextField search (stock name/symbol)
+- Sort by: Ex-Date (default) | Dividend Yield (highest first)
+- Renders: SDataTable with columns: Company | Symbol | Ex-Date | Record Date | Payment Date | Dividend Amount | Yield % | Type (interim/final)
+- `SDataFreshness` badge showing last NSE sync
+
+### `pages/IPOs/index.jsx`
+- Auth required
+- Title: "IPO Center"
+- Tabs: Upcoming | Open | Recent Listings
+- Renders: SDataTable with columns: Company | Price Band | Lot Size | Open Date | Close Date | GMP | Subscription | Status
+- `SDataFreshness` badge
+
+### `pages/Admin/index.jsx`
+- Auth required + admin role check (redirect to /dashboard if not admin)
+- Registers: adminStore
+- Title: "Admin Panel"
+- Tabs: Users | System Health | Sync Status | Audit Logs | Failed Jobs
+- Users tab: SDataTable with search, role badges, activate/deactivate toggle
+- System Health tab: provider status cards (NSE, Yahoo, Finnhub, TwelveData, Redis, DB) with latency badges
+- Sync Status tab: table of all Bull jobs with last_run, next_run, status
+- Audit Logs tab: SDataTable with action, user, entity, timestamp; filterable
+- Failed Jobs tab: SDataTable with retry button per row
+
+### `pages/Earnings/index.jsx`
+- Auth required
+- Registers: calendarStore
+- Title: "Earnings Calendar"
+- View toggle: Calendar | Table
+- Filters: SDropdown (sector), SDatePicker (month/quarter)
+- Table columns: Company | Symbol | Quarter | Earnings Date | Expected EPS | Actual EPS | Previous EPS | Surprise %
+- Upcoming earnings highlighted; results with surprise % shown in green/red chip
+- `SDataFreshness` badge
+
+### `pages/SavedScreeners/index.jsx`
+- Auth required
+- Registers: screenerStore
+- Title: "Saved Screeners"
+- List of saved screener presets as SCards: name, filters summary, created date, Run button, Delete button
+- Run button navigates to `/screener` with pre-filled filters from the saved preset (passed via router state)
+
+### `pages/CompareStocks/index.jsx`
+- Auth required
+- Title: "Compare Stocks"
+- Top: multi-symbol selector — up to 5 stocks — using debounced STextField autocomplete
+- Once symbols selected → `comparisonService.compare(symbols)` → side-by-side table
+- Sections: Valuation (PE, PB, PEG, EV/EBITDA) | Profitability (ROE, ROCE, ROA) | Growth (Revenue, Profit, EPS YoY) | Debt (D/E, Current Ratio, Interest Coverage) | Dividends (Yield, Payout Ratio)
+- Best value in each row highlighted in green
+
+### `pages/Goals/index.jsx`
+- Auth required
+- Registers: goalStore
+- Title: "Investment Goals"
+- Top: Create Goal button → SModal with: goal_type SDropdown (retirement/house/education/emergency/custom), title STextField, target_amount STextField, target_date SDatePicker, expected_cagr STextField
+- Goals rendered as SCards showing: title, progress bar (current/target), projected CAGR, time remaining, SIP needed
+- SIP needed computed via `calculatorService.computeSip()`
+
+### `pages/TaxReports/index.jsx`
+- Auth required
+- Registers: portfolioStore
+- Title: "Tax Reports"
+- Financial year SDropdown (2023-24, 2024-25, 2025-26)
+- Summary cards: STCG Tax, LTCG Tax, Dividend Income, Total Tax Liability
+- Holdings breakdown table: stock, buy date, sell date, holding period, buy price, sell price, gain/loss, STCG/LTCG classification
+- Download Report button → `taxService.downloadReport(year)` → triggers file download
+
+### `pages/Roles/index.jsx`
+- Auth required, admin only
+- Registers: roleStore
+- Title: "Roles Management"
+- SDataTable of roles (name, description, permission count, user count, actions)
+- Create/Edit role → SModal with: name STextField, description STextField, `SPermissionTree` for permission assignment
+- Delete role with confirmation
+
+### `pages/Permissions/index.jsx`
+- Auth required, admin only
+- Registers: roleStore
+- Title: "Permissions"
+- Grouped by module, rendered via `SPermissionTree` in read-only mode
+- Create permission → SModal with: key STextField (e.g. `stock.view`), description STextField, group STextField
+- No delete on system permissions
+
 ### `pages/Settings/index.jsx`
 - Tabs: Profile | Security | Notifications | API Keys (user can connect broker)
+- Notifications tab: toggle switches for email/push/SMS per event type (price alerts, earnings, dividends, news, insider trades) — calls `notificationService.updatePreferences()`
 
 ---
 
@@ -568,7 +737,7 @@ export const getChangeColor = (val) => val >= 0 ? 'success.main' : 'error.main'
 
 ## Environment Variables (`.env`)
 ```
-VITE_API_BASE_URL=http://localhost:5000/api
+VITE_API_BASE_URL=http://localhost:5000/api/v1
 VITE_GOOGLE_CLIENT_ID=<your-google-client-id>
 ```
 
@@ -586,3 +755,141 @@ VITE_GOOGLE_CLIENT_ID=<your-google-client-id>
 8. Components never import from `pages/`; pages import from `components/`
 9. Stores are registered/used only at the page (index.jsx) level; child components receive data via props or context
 10. Every page `index.jsx` sets document title via `useEffect(() => { document.title = '...' }, [])`
+11. Admin pages must check user role from `authStore.user.roles` and redirect non-admins to `/dashboard`
+12. All polling intervals must be stored in a ref and cleared in the `useEffect` cleanup function
+
+---
+
+## Unit Testing (Vitest + React Testing Library)
+
+### Install
+```
+npm install -D vitest @testing-library/react @testing-library/jest-dom @testing-library/user-event msw
+```
+
+### Test Folder Structure
+```
+src/
+├── __tests__/
+│   ├── components/
+│   │   ├── common/
+│   │   │   ├── STextField.test.jsx
+│   │   │   ├── SDataTable.test.jsx
+│   │   │   ├── SDropdown.test.jsx
+│   │   │   ├── SDatePicker.test.jsx
+│   │   │   ├── SPhoneNumber.test.jsx
+│   │   │   └── SDataFreshness.test.jsx
+│   │   ├── Home/
+│   │   │   ├── MarketIndexTicker.test.jsx
+│   │   │   └── TopGainersLosers.test.jsx
+│   │   └── StockDetail/
+│   │       ├── PriceChart.test.jsx
+│   │       └── ValuationMetrics.test.jsx
+│   ├── pages/
+│   │   ├── Login.test.jsx
+│   │   ├── Register.test.jsx
+│   │   └── StockDetail.test.jsx
+│   ├── services/
+│   │   ├── authService.test.js
+│   │   ├── stockService.test.js
+│   │   └── portfolioService.test.js
+│   ├── store/
+│   │   ├── authStore.test.js
+│   │   └── portfolioStore.test.js
+│   └── utils/
+│       ├── rules.test.js
+│       └── formatters.test.js
+├── mocks/
+│   ├── handlers.js       ← MSW request handlers (one per API endpoint used in tests)
+│   └── server.js         ← MSW server setup
+└── vitest.setup.js
+```
+
+### `vitest.config.js`
+```js
+import { defineConfig } from 'vitest/config'
+import react from '@vitejs/plugin-react'
+export default defineConfig({
+  plugins: [react()],
+  test: {
+    environment: 'jsdom',
+    setupFiles: ['./vitest.setup.js'],
+    globals: true,
+    coverage: { reporter: ['text', 'html'], exclude: ['node_modules/', 'src/mocks/'] },
+  },
+})
+```
+
+### `vitest.setup.js`
+```js
+import '@testing-library/jest-dom'
+import { beforeAll, afterAll, afterEach } from 'vitest'
+import { server } from './mocks/server'
+beforeAll(() => server.listen())
+afterEach(() => server.resetHandlers())
+afterAll(() => server.close())
+```
+
+### `mocks/handlers.js` — MSW handlers (intercept ALL API calls, return test fixtures)
+```js
+import { http, HttpResponse } from 'msw'
+export const handlers = [
+  http.post('/api/v1/auth/login', () =>
+    HttpResponse.json({ success: true, data: { accessToken: 'test-token', refreshToken: 'test-refresh', user: { id: '1', name: 'Test', email: 'test@test.com', roles: ['user'] } } })
+  ),
+  http.get('/api/v1/stocks/:symbol/quote', ({ params }) =>
+    HttpResponse.json({ success: true, data: { symbol: params.symbol, price: 2400.50, change: 12.5, changePercent: 0.52, source: 'NSE', timestamp: new Date().toISOString() } })
+  ),
+  http.get('/api/v1/stocks/indices/live', () =>
+    HttpResponse.json({ success: true, data: [{ name: 'NIFTY 50', value: 22400, change: 100, changePercent: 0.45 }] })
+  ),
+  http.get('/api/v1/market/status', () =>
+    HttpResponse.json({ success: true, data: { isOpen: true, session: 'normal', nextClose: '15:30' } })
+  ),
+  // Add a handler for every endpoint called in tests
+]
+```
+
+### Tests to Write
+
+**`utils/rules.test.js`**
+- Every rule function (required, email, minLength, maxLength, numeric, password, panCard, phone, confirmPassword) tested with valid + invalid inputs
+- Assert returns `true` on valid, error string on invalid
+
+**`components/common/STextField.test.jsx`**
+- Renders with label text
+- Shows red asterisk when `required` prop is true
+- Displays validation error below field when rule fails
+- Fires `onSearch` after debounce ms — use `vi.useFakeTimers()`
+- Does NOT fire `onSearch` before debounce completes
+
+**`components/common/SDataTable.test.jsx`**
+- Renders all column headers
+- Renders correct number of data rows
+- Shows skeleton rows when `loading={true}`
+- Shows empty state component when `data={[]}`
+- Search input triggers `onSearch` after 400ms debounce
+- Sort icon click calls `onSort(key, 'ASC')`, second click calls `onSort(key, 'DESC')`
+- Pagination change calls `onPaginationChange(page, limit)`
+
+**`store/authStore.test.js`**
+- `login()` sets accessToken, refreshToken, user, isAuthenticated=true
+- `logout()` clears all state, isAuthenticated=false
+- `updateTokens()` updates only accessToken, preserves user
+
+**`services/authService.test.js`** (MSW intercepts real fetch)
+- `login()` sends POST with correct body
+- `login()` returns data object on 200
+- `login()` throws with error message on 401
+
+**`pages/Login.test.jsx`**
+- Renders email and password fields
+- Submit with empty fields shows validation errors
+- Valid submit calls authService, stores tokens, redirects to /dashboard
+- Shows notistack error on failed login
+
+**`pages/StockDetail.test.jsx`**
+- Loads all data sections in parallel on mount
+- Shows SLoader while loading
+- Renders PriceChart, ValuationMetrics, NewsFeed after data loads
+- SDataFreshness badge shows source name

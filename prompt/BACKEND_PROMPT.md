@@ -236,7 +236,6 @@ app.use('/api/v1/news', newsApis)
 app.use('/api/v1/watchlists', watchlistApis)
 app.use('/api/v1/alerts', alertApis)
 app.use('/api/v1/ai-analysis', aiAnalysisApis)
-
 app.use('/api/v1/earnings', earningsApis)
 app.use('/api/v1/calendar', calendarApis)
 app.use('/api/v1/dividends', dividendApis)
@@ -249,6 +248,8 @@ app.use('/api/v1/shareholding', shareholdingApis)
 app.use('/api/v1/screener-presets', screenerPresetApis)
 app.use('/api/v1/roles', roleApis)
 app.use('/api/v1/permissions', permissionApis)
+app.use('/api/v1/market', marketApis)           ← NEW
+app.use('/api/v1/calculator', calculatorApis)   ← NEW
 // 6. Mount 404 handler after all routes
 // 7. Mount errorMiddleware as last middleware (4 args)
 // 8. Connect Redis, verify DB connection
@@ -296,6 +297,8 @@ YAHOO_FINANCE_KEY=          # not needed for yahoo-finance2
 ALPHA_VANTAGE_KEY=          # free at alphavantage.co
 NEWS_API_KEY=               # free at newsapi.org
 GEMINI_API_KEY=             # free tier at ai.google.dev
+FINNHUB_API_KEY=            # free at finnhub.io (60 req/min)
+TWELVE_DATA_API_KEY=        # free at twelvedata.com (800 req/day)
 
 FRONTEND_URL=http://localhost:5173
 ```
@@ -319,6 +322,19 @@ FRONTEND_URL=http://localhost:5173
 // otpLimiter: max 3 requests per 10 minutes per IP
 // generalLimiter: max 100 requests per minute per user
 // Export all three individually
+```
+
+### `permissionMiddleware.js`
+```js
+// authorize(permissionKey) — returns Express middleware
+// 1. Requires authenticate to run first (req.user must exist)
+// 2. Check Redis cache: key `user:permissions:${req.user.userId}` TTL 5min
+// 3. Cache miss: query user_roles JOIN role_permissions JOIN permissions WHERE user_id = userId
+// 4. Store flat array of permission_keys in Redis
+// 5. If permissionKey is in array → call next()
+// 6. If not → throw AppError(403, 'FORBIDDEN', 'Insufficient permissions')
+// Usage in route: router.get('/admin/users', authenticate, authorize('admin.users.view'), controller)
+// Invalidate cache on role change: cacheHelper.del(`user:permissions:${userId}`)
 ```
 
 ### `validationMiddleware.js`
@@ -364,51 +380,80 @@ class AppError extends Error {
 
 ### `tables.js`
 ```js
-// Single source of truth for ALL table names
-// NEVER write table name strings anywhere else
+// Single source of truth for ALL table names — NEVER write table name strings anywhere else
 export const TABLES = {
+  // Auth
   USERS: 'users',
   REFRESH_TOKENS: 'refresh_tokens',
   OTP_CODES: 'otp_codes',
+
+  // Stocks
   STOCKS: 'stocks',
+  SECTORS: 'sectors',
   STOCK_PRICES: 'stock_prices',
   STOCK_FUNDAMENTALS: 'stock_fundamentals',
-  NEWS: 'news',
-  NEWS_STOCK_MAP: 'news_stock_map',
-  PORTFOLIOS: 'portfolios',
-  PORTFOLIO_HOLDINGS: 'portfolio_holdings',
-  PORTFOLIO_TRANSACTIONS: 'portfolio_transactions',
-  WATCHLISTS: 'watchlists',
-  WATCHLIST_ITEMS: 'watchlist_items',
-  MUTUAL_FUNDS: 'mutual_funds',
-  MF_INVESTMENTS: 'mf_investments',
-  PRICE_ALERTS: 'price_alerts',
-  AI_ANALYSIS: 'ai_analysis_cache',
-  TENDERS: 'tenders',
-  TENDER_COMPANIES: 'tender_companies',
-  SECTORS: 'sectors',
-  AUDIT_LOGS: 'audit_logs',
-  EARNINGS_CALENDAR: 'earnings_calendar',
   SHAREHOLDING_PATTERNS: 'shareholding_patterns',
   BULK_BLOCK_DEALS: 'bulk_block_deals',
   INSIDER_TRADES: 'insider_trades',
-  INSTITUTIONAL_FLOWS: 'institutional_flows',
-  DIVIDEND_CALENDAR: 'dividend_calendar',
   STOCK_SPLITS: 'stock_splits',
-  INVESTMENT_GOALS: 'investment_goals',
+  CATALYSTS: 'catalysts',
+  RECENTLY_VIEWED_STOCKS: 'recently_viewed_stocks',
+
+  // News & Events
+  NEWS: 'news',
+  NEWS_STOCK_MAP: 'news_stock_map',
+  TENDERS: 'tenders',
+  TENDER_COMPANIES: 'tender_companies',
+  EARNINGS_CALENDAR: 'earnings_calendar',
+  DIVIDEND_CALENDAR: 'dividend_calendar',
+  ECONOMIC_EVENTS: 'economic_events',
+  INSTITUTIONAL_FLOWS: 'institutional_flows',
+
+  // IPO
+  IPO_LISTINGS: 'ipo_listings',
+
+  // Mutual Funds
+  MUTUAL_FUNDS: 'mutual_funds',
+  MF_INVESTMENTS: 'mf_investments',
+
+  // Portfolio
+  PORTFOLIOS: 'portfolios',
+  PORTFOLIO_HOLDINGS: 'portfolio_holdings',
+  PORTFOLIO_TRANSACTIONS: 'portfolio_transactions',
+
+  // Watchlist
+  WATCHLISTS: 'watchlists',
+  WATCHLIST_ITEMS: 'watchlist_items',
   WATCHLIST_NOTES: 'watchlist_notes',
   WATCHLIST_TAGS: 'watchlist_tags',
+
+  // Alerts & Notifications
+  PRICE_ALERTS: 'price_alerts',
   NOTIFICATIONS: 'notifications',
-  SAVED_SCREENERS: 'saved_screeners',
-  RECENTLY_VIEWED_STOCKS: 'recently_viewed_stocks',
-  ECONOMIC_EVENTS: 'economic_events',
+  NOTIFICATION_PREFERENCES: 'notification_preferences',
+
+  // Goals & Tax
+  INVESTMENT_GOALS: 'investment_goals',
   TAX_REPORTS: 'tax_reports',
-  MARKET_DATA_SOURCES: 'market_data_sources',
-  MARKET_DATA_SYNC_LOGS: 'market_data_sync_logs',
+
+  // AI
+  AI_ANALYSIS_CACHE: 'ai_analysis_cache',
+
+  // Screener
+  SAVED_SCREENERS: 'saved_screeners',
+
+  // RBAC
   ROLES: 'roles',
   PERMISSIONS: 'permissions',
   ROLE_PERMISSIONS: 'role_permissions',
   USER_ROLES: 'user_roles',
+
+  // Market Data Infrastructure
+  MARKET_DATA_SOURCES: 'market_data_sources',
+  MARKET_DATA_SYNC_LOGS: 'market_data_sync_logs',
+
+  // Audit
+  AUDIT_LOGS: 'audit_logs',
 }
 ```
 
@@ -523,6 +568,8 @@ GET  /api/v1/stocks/:symbol/freshness       → authenticate → stockController
 GET  /api/v1/stocks/:symbol/bulk-deals      → authenticate → stockController.getBulkAndBlockDeals
 GET  /api/v1/stocks/:symbol/earnings        → authenticate → stockController.getEarningsHistory
 GET  /api/v1/stocks/:symbol/52-week-range   → authenticate → stockController.get52WeekRange
+POST /api/v1/stocks/:symbol/viewed          → authenticate → stockController.markViewed
+GET  /api/v1/stocks/recently-viewed         → authenticate → stockController.getRecentlyViewed
 ```
 
 ### `stockService.js` Logic:
@@ -590,6 +637,7 @@ GET    /api/v1/portfolio/transactions       → authenticate → portfolioContro
 GET    /api/v1/portfolio/performance        → authenticate → portfolioController.getPerformance
 GET    /api/v1/portfolio/rebalance          → authenticate → portfolioController.getRebalanceSuggestion
 GET    /api/v1/portfolio/sector-allocation  → authenticate → portfolioController.getSectorAllocation
+GET    /api/v1/portfolio/dividend-income    → authenticate → portfolioController.getDividendIncome
 ```
 
 ### `portfolioService.js` Logic:
@@ -719,26 +767,70 @@ DELETE /api/v1/users/:id/roles/:roleId
 ---
 
 
-## Feature: Admin (`features/admin/`)
+## Feature: Market (`features/market/`)  ← NEW FEATURE MODULE
 
+### `marketApis.js` Endpoints:
+```
+GET /api/v1/market/status        → public → marketController.getStatus
+GET /api/v1/market/fii-dii       → authenticate → marketController.getFiiDii
+GET /api/v1/market/fii-dii/history → authenticate → marketController.getFiiDiiHistory
+```
+
+### `marketService.js` Logic:
+- `getStatus()`: call nseClient.getMarketStatus() → cache 60s → return `{ isOpen, session, nextOpen, nextClose, holidays[] }`
+- `getFiiDii()`: fetch latest row from `institutional_flows` table → cache 5min → return daily buy/sell/net for FII + DII
+- `getFiiDiiHistory(days)`: fetch last N days from `institutional_flows` for trend chart
+
+### `marketController.js`, `marketRepository.js` — follow standard 4-layer pattern
+
+---
+
+## Feature: Calculator (`features/calculator/`)  ← NEW FEATURE MODULE
+
+### `calculatorApis.js` Endpoints:
+```
+POST /api/v1/calculator/sip   → authenticate, validate → calculatorController.computeSip
+POST /api/v1/calculator/drip  → authenticate, validate → calculatorController.computeDrip
+```
+
+### `calculatorService.js` Logic:
+- `computeSip({ target_corpus, years, expected_cagr, inflation_rate })`:
+  - Compute monthly SIP = target / (((1 + r/12)^n - 1) / (r/12) * (1 + r/12))
+  - Return `{ monthly_sip, total_invested, total_corpus, inflation_adjusted_corpus, year_by_year: [] }`
+  - Pure computation — no DB read/write
+- `computeDrip({ symbol, shares, years })`:
+  - Fetch dividend history for symbol
+  - Simulate reinvestment compounding
+  - Return `{ initial_investment, final_corpus, projected_passive_income, year_by_year: [] }`
+
+### No repository layer needed for calculator — pure computation service
+
+---
+
+
+## Feature: Admin (`features/admin/`)
 
 ### adminApis.js Endpoints:
 ```
-GET  /api/v1/admin/users            → authenticate, authorize('admin') → adminController.getUsers
-GET  /api/v1/admin/stats            → authenticate, authorize('admin') → adminController.getSystemStats
-GET  /api/v1/admin/audit-logs       → authenticate, authorize('admin') → adminController.getAuditLogs
-GET  /api/v1/admin/failed-jobs      → authenticate, authorize('admin') → adminController.getFailedJobs
-POST /api/v1/admin/retry-job/:id    → authenticate, authorize('admin') → adminController.retryJob
+GET  /api/v1/admin/users            → authenticate, authorize('admin.users.view') → adminController.getUsers
+GET  /api/v1/admin/stats            → authenticate, authorize('admin.view') → adminController.getSystemStats
+GET  /api/v1/admin/audit-logs       → authenticate, authorize('admin.view') → adminController.getAuditLogs
+GET  /api/v1/admin/failed-jobs      → authenticate, authorize('admin.view') → adminController.getFailedJobs
+POST /api/v1/admin/retry-job/:id    → authenticate, authorize('admin.view') → adminController.retryJob
+GET  /api/v1/admin/system-health    → authenticate, authorize('admin.view') → adminController.getSystemHealth
+GET  /api/v1/admin/sync-status      → authenticate, authorize('admin.view') → adminController.getSyncStatus
 ```
 ---
 
 ### adminService.js Logic:
 ```
-- `getUsers()`: fetch all users with pagination, filtering, and search
+- `getUsers(pagination, sort, search)`: fetch all users with pagination, filtering, and search
 - `getSystemStats()`: returns active users, API usage, alerts count, watchlist count, and system health metrics
-- `getAuditLogs()`: fetch write operation logs
-- `getFailedJobs()`: fetch failed Bull jobs
+- `getAuditLogs(pagination, filters)`: fetch write operation logs with filters
+- `getFailedJobs()`: fetch failed Bull jobs from all queues via Bull API
 - `retryJob(jobId)`: retry failed async jobs
+- `getSystemHealth()`: ping Redis, Supabase, and all external providers (NSE, Yahoo, Finnhub, TwelveData); return latency and status per provider; check market_data_sources table for last healthy status
+- `getSyncStatus()`: fetch all Bull job queues — last run time, next scheduled run, success/fail counts per job, from market_data_sync_logs
 ```
 ---
 
@@ -754,19 +846,31 @@ POST /api/v1/admin/retry-job/:id    → authenticate, authorize('admin') → adm
 
 ### notificationApis.js Endpoints:
 ```
-GET    /api/v1/notifications             → authenticate → notificationController.getAll
-PATCH  /api/v1/notifications/:id/read    → authenticate → notificationController.markRead
-PATCH  /api/v1/notifications/read-all    → authenticate → notificationController.markAllRead
-DELETE /api/v1/notifications/:id         → authenticate → notificationController.deleteNotification
+GET    /api/v1/notifications                    → authenticate → notificationController.getAll
+PATCH  /api/v1/notifications/:id/read           → authenticate → notificationController.markRead
+PATCH  /api/v1/notifications/read-all           → authenticate → notificationController.markAllRead
+DELETE /api/v1/notifications/:id                → authenticate → notificationController.deleteNotification
+GET    /api/v1/notifications/preferences        → authenticate → notificationController.getPreferences
+PATCH  /api/v1/notifications/preferences        → authenticate, validate → notificationController.updatePreferences
 ```
 ---
 
 ### notificationService.js Logic:
 ```
-- `getAll(userId)`: fetch user notifications sorted by latest
+- `getAll(userId, pagination)`: fetch user notifications sorted by latest
 - `markRead(userId, notificationId)`: mark single notification as read
 - `markAllRead(userId)`: mark all notifications as read
 - `deleteNotification(userId, notificationId)`: delete a notification
+- `getPreferences(userId)`: fetch user notification preferences from notification_preferences table
+- `updatePreferences(userId, prefs)`: upsert notification preferences (email_enabled, push_enabled, price_alerts, earnings_alerts, dividend_alerts, news_alerts, insider_alerts)
+```
+
+### portfolioService.js additions:
+```
+- `getDividendIncome(userId, year)`:
+  - Join portfolio_holdings → stocks → dividend_calendar WHERE ex_date in financial year
+  - Sum dividend_amount * quantity for each holding
+  - Return total income, paid vs pending, monthly breakdown chart data, projected annual income
 ```
 ---
 
@@ -835,43 +939,104 @@ GET /api/v1/ai-analysis/portfolio/rebalance      → authenticate → aiAnalysis
 - Functions: `getQuote(symbol)`, `getHistory(symbol, { period1, period2, interval })`, `getFundamentals(symbol)`, `getBalanceSheet(symbol)`, `getIncomeStatement(symbol)`, `search(query)`
 - All Indian stocks: append `.NS` for NSE or `.BO` for BSE to symbol
 
+### `nseClient.js`
+- Uses unofficial NSE endpoints — free, no key, real-time data
+- **Cookie Management (critical):** On init and every 4 minutes, GET `https://www.nseindia.com` → extract `Set-Cookie` headers → store cookies string in Redis key `nse:cookies` with TTL 5min. Every subsequent NSE request must attach these cookies.
+- On any 403 response from NSE: refresh cookies immediately, retry once
+- Required headers on every request: `{ 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)', 'Accept-Language': 'en-US,en;q=0.9', 'Accept-Encoding': 'gzip, deflate, br', 'Referer': 'https://www.nseindia.com', 'Connection': 'keep-alive' }`
+- Functions:
+  - `getQuote(symbol)` → `GET /api/quote-equity?symbol=SYMBOL`
+  - `getAllIndices()` → `GET /api/allIndices` — returns NIFTY50, SENSEX, all indices in one call
+  - `getMarketStatus()` → `GET /api/market-status`
+  - `getBulkDeals()` → `GET /api/bulk-deals`
+  - `getBlockDeals()` → `GET /api/block-deals`
+  - `getInsiderTrading(symbol)` → `GET /api/insider-trading?symbol=SYMBOL`
+  - `getCorporateActions()` → `GET /api/corporates-corporateActions?index=equities` — dividends, splits, bonuses
+  - `getShareholdingPattern(symbol)` → `GET /api/corporate-shareholding-patterns?symbol=SYMBOL&series=EQ`
+  - `getFiiDiiData()` → `GET /api/fiidiiTradeReact`
+  - `getUpcomingIPOs()` → `GET /api/allIpo`
+  - `getTopGainersLosers()` → `GET /api/live-analysis-data-gainers-loosers?index=gainers` / `losers`
+
+### `finnhubClient.js`
+- Free tier: 60 req/min — fallback when NSE is down
+- Key: `FINNHUB_API_KEY` from env
+- `getQuote(symbol)` → `GET https://finnhub.io/api/v1/quote?symbol=SYMBOL.NS&token=KEY`
+- Normalize response to standard quote shape
+
+### `twelveDataClient.js`
+- Free tier: 800 req/day — last resort for price history
+- Key: `TWELVE_DATA_API_KEY` from env
+- `getHistory(symbol, interval, outputsize)` → `GET https://api.twelvedata.com/time_series?symbol=SYMBOL&interval=1day&outputsize=N&apikey=KEY`
+
+### `dataProviderManager.js`
+- **Priority order for live quotes:** NSE (real-time) → Yahoo Finance (~15min delay) → Finnhub (fallback) → Twelve Data (last resort)
+- **Failover logic:** try provider 1; on error/timeout (>5s) → try provider 2; etc.
+- **Normalized quote response shape** — all providers must return this shape:
+```js
+{
+  symbol: 'RELIANCE',
+  price: 2400.50,
+  open: 2380.00,
+  high: 2420.00,
+  low: 2375.00,
+  previousClose: 2388.00,
+  change: 12.50,
+  changePercent: 0.52,
+  volume: 12500000,
+  marketCap: 1623000,        // in Crores
+  source: 'NSE',             // which provider responded
+  isFresh: true,             // true if data < 60s old
+  timestamp: '2025-01-15T09:30:00.000Z'
+}
+```
+- Each provider's client maps its own response to this schema before returning
+- Store `source` + `timestamp` in Redis alongside the quote data for `SDataFreshness` badge
+
 ### `newsApiClient.js`
 - Uses NewsAPI.org free tier (1000 req/day)
 - Functions: `getHeadlines({ q, category, from, to })`, `getEverything({ q, from, to, sortBy })`
 - Cache all responses for 5 minutes minimum to preserve quota
 
-### `mfApiClient.js`
-- Uses `mfapi.in` — completely free Indian mutual fund API
-- Functions: `getAllFunds()`, `getFundBySchemeCode(code)`, `getNAVHistory(code)`
-
-### `nseClient.js`
-- Uses unofficial NSE endpoints (no key needed, but set custom headers)
-- Functions: `getIndexData(index)`, `getBulkDeals()`, `getBlockDeals()`, `getInsiderTrading(symbol)`, `getUpcomingIPOs()`
+### `googleNewsClient.js`
+- Parses Google News RSS — unlimited, free, no key
+- npm: `rss-parser`
+- `getStockNews(query)` → `https://news.google.com/rss/search?q=QUERY+NSE+India&hl=en-IN&gl=IN&ceid=IN:en`
+- `getMarketNews()` → general India market RSS feed
+- Run alongside newsApiClient in aggregation job, deduplicate by URL hash
 
 ### `economicCalendarClient.js`
-- Fetches economic events (RBI meetings, inflation releases, GDP data, FED decisions)
-- Functions: getEconomicEvents()
-- Used by calendar module and dashboard economic calendar
+- **India (RBI):** Parse `https://www.rbi.org.in/scripts/rss.aspx` — free, no key
+- **US (FRED):** `https://api.stlouisfed.org/fred/releases/dates?api_key=none&file_type=json` — free, no key required for public data
+- Fetches economic events (RBI meetings, inflation releases, GDP data, Fed decisions)
+- Functions: `getEconomicEvents()` → combined + normalized list
+- Used by `economicCalendarSyncJob`
 
 ### `dividendClient.js`
-- Fetches dividend history and stock split history
-- Functions: getDividendHistory(symbol), getStockSplits(symbol)
-- Used by stock detail page
+- Primary: NSE `getCorporateActions()` from nseClient (dividends + splits + bonuses)
+- Secondary: yahoo-finance2 `dividends(symbol)` for historical data
+- Functions: `getDividendHistory(symbol)`, `getStockSplits(symbol)`
+- Used by `dividendSyncJob`
 
 ### `shareholdingClient.js`
-- Fetches promoter/FII/DII/public shareholding patterns
-- Functions: getShareholding(symbol)
-- Used by stock detail shareholding widget
+- Uses NSE `getShareholdingPattern(symbol)` from nseClient
+- Functions: `getShareholding(symbol)` → normalized promoter/FII/DII/public/pledged breakdown
+- Used by `stockService.getShareholdingPattern()`
+
+### `mfApiClient.js`
+- Uses `mfapi.in` — completely free Indian mutual fund API, unlimited
+- Functions: `getAllFunds()`, `getFundBySchemeCode(code)`, `getNAVHistory(code)`
 
 ### `geminiClient.js`
 - Uses Google Gemini API free tier (`gemini-1.5-flash` model, 15 RPM free)
-- Functions: `generateStockAnalysis(fundamentals, newsHeadlines)` → returns qualitative analysis text
-- `scoreSentiment(headlines[])` → returns `[{headline, sentiment, impact}]`
-- `getRebalanceSuggestion(portfolioData)` → returns natural language rebalance advice
+- Functions: `generateStockAnalysis(fundamentals, newsHeadlines)` → qualitative analysis text + recommendation + confidence + risk_factors + catalysts
+- `scoreSentiment(headlines[])` → `[{headline, sentiment, impact}]`
+- `getRebalanceSuggestion(portfolioData)` → natural language rebalance advice
+- `explainScore(scoreType, data)` → explains why a stock scored X on risk/value/growth/moat
 
 ### `alphaVantageClient.js`
-- Free tier: 25 req/day — use sparingly for data Yahoo Finance misses
+- Free tier: 25 req/day — use sparingly
 - Functions: `getEarningsCalendar()`, `getCompanyOverview(symbol)`
+- Cache 12 hours minimum
 
 ---
 
@@ -994,6 +1159,129 @@ Paginated format:
 - Queue: notification-dispatch
 - Runs every minute
 - Processes alerts, earnings reminders, dividend reminders, and watchlist events
+
+---
+
+## Unit Testing (Jest + Supertest)
+
+### Install
+```
+npm install -D jest supertest @jest/globals
+```
+
+### `jest.config.js`
+```js
+module.exports = {
+  testEnvironment: 'node',
+  testMatch: ['**/__tests__/**/*.test.js'],
+  collectCoverage: true,
+  coverageDirectory: 'coverage',
+  coverageReporters: ['text', 'html'],
+  setupFiles: ['<rootDir>/tests/setup.js'],
+}
+```
+
+### `tests/setup.js`
+```js
+process.env.NODE_ENV = 'test'
+process.env.JWT_SECRET = 'test-jwt-secret-32chars-minimum!!'
+process.env.JWT_REFRESH_SECRET = 'test-refresh-secret-32chars-min!!'
+process.env.BCRYPT_SALT_ROUNDS = '1'   // Fast hashing in tests only
+```
+
+### Test Folder Structure
+```
+backend/
+├── __tests__/
+│   ├── unit/
+│   │   ├── utils/
+│   │   │   ├── tokenHelper.test.js
+│   │   │   ├── hashHelper.test.js
+│   │   │   ├── queryHelper.test.js
+│   │   │   └── responseHelper.test.js
+│   │   ├── middleware/
+│   │   │   ├── authMiddleware.test.js
+│   │   │   ├── permissionMiddleware.test.js
+│   │   │   ├── validationMiddleware.test.js
+│   │   │   └── errorMiddleware.test.js
+│   │   └── features/
+│   │       ├── auth/
+│   │       │   ├── authService.test.js
+│   │       │   └── authController.test.js
+│   │       ├── stock/
+│   │       │   ├── stockService.test.js
+│   │       │   └── stockController.test.js
+│   │       ├── portfolio/
+│   │       │   └── portfolioService.test.js
+│   │       └── screener/
+│   │           └── screenerService.test.js
+│   └── integration/
+│       ├── auth.integration.test.js
+│       ├── stock.integration.test.js
+│       └── portfolio.integration.test.js
+└── tests/
+    └── setup.js
+```
+
+### Tests to Write
+
+**`utils/tokenHelper.test.js`**
+- `generateAccessToken(payload)` returns a non-empty JWT string
+- `verifyAccessToken(token)` returns decoded payload for valid token
+- `verifyAccessToken` throws for expired token
+- `verifyAccessToken` throws for invalid signature (wrong secret)
+- `generateRefreshToken` + `verifyRefreshToken` — same pattern
+
+**`utils/hashHelper.test.js`**
+- `hashPassword(plain)` returns a bcrypt hash (not equal to input)
+- `comparePassword(plain, hash)` returns true for matching password
+- `comparePassword` returns false for wrong password
+- `hashPassword` on same input produces different hash each time (salt)
+
+**`middleware/authMiddleware.test.js`**
+- Calls `next()` with `req.user` attached for a valid token
+- Throws `AppError(401)` when Authorization header is missing
+- Throws `AppError(401)` for malformed token
+- Throws `AppError(401)` for expired token
+
+**`middleware/permissionMiddleware.test.js`**
+- Mock Redis and Supabase; user with required permission → calls next()
+- User without required permission → throws AppError(403)
+- Cache hit path is used on second call (Redis mock verifies get called)
+
+**`features/auth/authService.test.js`** (mock authRepository + cacheHelper)
+- `register()`: creates user, hashes password, returns tokens + user
+- `register()`: throws AppError(409) if email already exists
+- `login()`: returns accessToken + refreshToken for valid credentials
+- `login()`: throws AppError(401) for wrong password
+- `login()`: throws AppError(404) for unknown email
+- `sendOtp()`: generates a 6-digit OTP, hashes it, calls repository to save
+- `verifyOtp()`: returns true for correct OTP within expiry
+- `verifyOtp()`: throws for expired or used OTP
+
+**`features/stock/stockService.test.js`** (mock cacheHelper + yahooFinanceClient + nseClient)
+- `getQuote()`: returns from cache when cache hit (no external call)
+- `getQuote()`: calls dataProviderManager on cache miss
+- `getQuote()`: stores result in cache after fetch
+- `getValuation()`: correctly computes PE = price/eps ratio from raw data
+- `search(q)`: calls repository with correct ILIKE pattern
+
+**`integration/auth.integration.test.js`** (Supertest against real app, test DB)
+- `POST /api/v1/auth/register` → 201 with tokens on valid payload
+- `POST /api/v1/auth/register` → 400 on missing required fields
+- `POST /api/v1/auth/register` → 409 on duplicate email
+- `POST /api/v1/auth/login` → 200 with tokens on valid credentials
+- `POST /api/v1/auth/login` → 401 on wrong password
+- `POST /api/v1/auth/login` → 429 after 5 rapid attempts (rate limiter)
+- `GET /api/v1/auth/me` → 200 with user data when valid token provided
+- `GET /api/v1/auth/me` → 401 when no token
+- `POST /api/v1/auth/refresh-token` → 200 with new accessToken on valid refresh token
+
+**`integration/stock.integration.test.js`**
+- `GET /api/v1/stocks/indices/live` → 200 (public, no auth needed)
+- `GET /api/v1/stocks/search?q=REL` → 401 without token
+- `GET /api/v1/stocks/search?q=REL` → 200 with valid token
+- `GET /api/v1/stocks/RELIANCE/quote` → 200 with valid token, correct shape
 
 ---
 

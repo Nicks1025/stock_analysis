@@ -31,7 +31,7 @@ CREATE TABLE users (
   country_code      VARCHAR(10),
   pan_number        VARCHAR(10),                  -- Optional, for tax reporting
   avatar_url        TEXT,
-  role              VARCHAR(50) NOT NULL DEFAULT 'user',   -- 'user' | 'admin'
+  -- NOTE: roles managed via user_roles + roles + permissions tables (RBAC). No role column here.
   is_email_verified BOOLEAN NOT NULL DEFAULT FALSE,
   is_phone_verified BOOLEAN NOT NULL DEFAULT FALSE,
   google_id         VARCHAR(255) UNIQUE,          -- From Google OAuth
@@ -559,7 +559,7 @@ CREATE TABLE ai_analysis_cache (
   model_used      VARCHAR(100),
   recommendation       VARCHAR(20),     -- BUY/HOLD/SELL/WATCH
   confidence_score     NUMERIC(5,2),
-  explanation          TEXT
+  explanation          TEXT,
   generated_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
   expires_at      TIMESTAMPTZ NOT NULL
 );
@@ -831,6 +831,9 @@ CREATE TABLE recently_viewed_stocks (
   stock_id      UUID NOT NULL REFERENCES stocks(id) ON DELETE CASCADE,
   viewed_at     TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+CREATE UNIQUE INDEX idx_recently_viewed_user_stock ON recently_viewed_stocks(user_id, stock_id);
+CREATE INDEX idx_recently_viewed_viewed_at ON recently_viewed_stocks(user_id, viewed_at DESC);
 ```
 ---
 
@@ -843,6 +846,9 @@ CREATE TABLE market_data_sources (
   source_type VARCHAR(50),
   priority_order INTEGER,
   is_active BOOLEAN DEFAULT TRUE,
+  last_checked_at TIMESTAMPTZ,
+  last_success_at TIMESTAMPTZ,
+  avg_latency_ms INTEGER,
   created_at TIMESTAMPTZ DEFAULT now()
 );
 ```
@@ -862,6 +868,8 @@ CREATE TABLE market_data_sync_logs (
   error_message TEXT
 );
 
+CREATE INDEX idx_sync_logs_source ON market_data_sync_logs(source_id);
+CREATE INDEX idx_sync_logs_synced_at ON market_data_sync_logs(synced_at DESC);
 ```
 
 ---
@@ -872,7 +880,8 @@ CREATE TABLE market_data_sync_logs (
 CREATE TABLE roles (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   name VARCHAR(100) UNIQUE NOT NULL,
-  description TEXT
+  description TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 ```
 ---
@@ -882,35 +891,144 @@ CREATE TABLE roles (
 ```sql
 CREATE TABLE permissions (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  permission_key VARCHAR(200) UNIQUE NOT NULL,
-  description TEXT
+  permission_key VARCHAR(200) UNIQUE NOT NULL,  -- e.g. 'stock.view', 'admin.users.view'
+  description TEXT,
+  group_name VARCHAR(100),                       -- e.g. 'stock', 'admin', 'portfolio'
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+CREATE INDEX idx_permissions_group ON permissions(group_name);
 ```
 ---
-
 
 ## Table 40
 
 ```sql
 CREATE TABLE role_permissions (
-  role_id UUID REFERENCES roles(id),
-  permission_id UUID REFERENCES permissions(id),
+  role_id UUID REFERENCES roles(id) ON DELETE CASCADE,
+  permission_id UUID REFERENCES permissions(id) ON DELETE CASCADE,
   PRIMARY KEY(role_id, permission_id)
 );
 ```
 ---
 
-
 ## Table 41
 
 ```sql
 CREATE TABLE user_roles (
-  user_id UUID REFERENCES users(id),
-  role_id UUID REFERENCES roles(id),
+  user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+  role_id UUID REFERENCES roles(id) ON DELETE CASCADE,
   PRIMARY KEY(user_id, role_id)
 );
+
+CREATE INDEX idx_user_roles_user ON user_roles(user_id);
 ```
 ---
+
+## Table 42: `economic_events`
+Macroeconomic events calendar (RBI meetings, inflation, GDP, Fed decisions).
+
+```sql
+CREATE TABLE economic_events (
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  event_name      VARCHAR(255) NOT NULL,
+  country         VARCHAR(100) NOT NULL DEFAULT 'India',
+  impact          VARCHAR(20) NOT NULL,   -- 'high' | 'medium' | 'low'
+  event_date      TIMESTAMPTZ NOT NULL,
+  actual_value    VARCHAR(100),
+  forecast_value  VARCHAR(100),
+  previous_value  VARCHAR(100),
+  unit            VARCHAR(50),
+  affected_sectors  VARCHAR(100)[],
+  source          VARCHAR(100),           -- 'RBI' | 'MoSPI' | 'Fed' | 'FRED'
+  notes           TEXT,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX idx_economic_events_date ON economic_events(event_date DESC);
+CREATE INDEX idx_economic_events_impact ON economic_events(impact);
+CREATE INDEX idx_economic_events_country ON economic_events(country);
+
+CREATE TRIGGER handle_updated_at BEFORE UPDATE ON economic_events
+  FOR EACH ROW EXECUTE PROCEDURE moddatetime(updated_at);
+```
+
+---
+
+## Table 43: `tax_reports`
+Computed tax liability per user per financial year.
+
+```sql
+CREATE TABLE tax_reports (
+  id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id             UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  financial_year      VARCHAR(10) NOT NULL,         -- '2025-26'
+  stcg_amount         NUMERIC(18,4) DEFAULT 0,      -- Short-term capital gains
+  ltcg_amount         NUMERIC(18,4) DEFAULT 0,      -- Long-term capital gains
+  dividend_income     NUMERIC(18,4) DEFAULT 0,
+  total_tax_liability NUMERIC(18,4) DEFAULT 0,
+  report_data         JSONB,                        -- Full transaction-level breakdown
+  generated_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (user_id, financial_year)
+);
+
+CREATE INDEX idx_tax_reports_user ON tax_reports(user_id);
+CREATE INDEX idx_tax_reports_user_year ON tax_reports(user_id, financial_year);
+```
+
+---
+
+## Table 44: `notification_preferences`
+Per-user notification channel and event preferences.
+
+```sql
+CREATE TABLE notification_preferences (
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id         UUID UNIQUE NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  email_enabled   BOOLEAN DEFAULT TRUE,
+  push_enabled    BOOLEAN DEFAULT FALSE,
+  sms_enabled     BOOLEAN DEFAULT FALSE,
+  price_alerts    BOOLEAN DEFAULT TRUE,
+  earnings_alerts BOOLEAN DEFAULT TRUE,
+  dividend_alerts BOOLEAN DEFAULT TRUE,
+  news_alerts     BOOLEAN DEFAULT FALSE,
+  insider_alerts  BOOLEAN DEFAULT FALSE,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TRIGGER handle_updated_at BEFORE UPDATE ON notification_preferences
+  FOR EACH ROW EXECUTE PROCEDURE moddatetime(updated_at);
+```
+
+---
+
+## Table 45: `catalysts`
+Company-specific growth catalysts tracked per stock.
+
+```sql
+CREATE TABLE catalysts (
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  stock_id        UUID NOT NULL REFERENCES stocks(id) ON DELETE CASCADE,
+  catalyst_type   VARCHAR(100) NOT NULL,  -- 'capex' | 'acquisition' | 'new_product' | 'order' | 'approval' | 'export' | 'partnership'
+  title           VARCHAR(500) NOT NULL,
+  description     TEXT,
+  expected_date   DATE,
+  impact_level    VARCHAR(20),            -- 'high' | 'medium' | 'low'
+  status          VARCHAR(50),            -- 'upcoming' | 'completed' | 'delayed' | 'cancelled'
+  source_url      TEXT,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX idx_catalysts_stock ON catalysts(stock_id);
+CREATE INDEX idx_catalysts_date ON catalysts(expected_date DESC);
+CREATE INDEX idx_catalysts_status ON catalysts(status);
+
+CREATE TRIGGER handle_updated_at BEFORE UPDATE ON catalysts
+  FOR EACH ROW EXECUTE PROCEDURE moddatetime(updated_at);
+```
 
 ## Entity Relationship Summary
 
@@ -922,26 +1040,49 @@ users
   │           └── 1:N → portfolio_holdings → stocks
   │           └── 1:N → portfolio_transactions → stocks
   ├── 1:N → watchlists
-  │           └── N:M → stocks (via watchlist_items)
+  │           └── 1:N → watchlist_items → stocks
+  │                         └── 1:N → watchlist_notes
+  │                         └── 1:N → watchlist_tags
   ├── 1:N → price_alerts → stocks
   ├── 1:N → mf_investments → mutual_funds
-  └── 1:N → audit_logs
+  ├── 1:N → investment_goals
+  ├── 1:N → notifications
+  ├── 1:1 → notification_preferences
+  ├── 1:N → saved_screeners
+  ├── 1:N → recently_viewed_stocks → stocks
+  ├── 1:N → tax_reports
+  ├── 1:N → audit_logs
+  └── N:M → roles (via user_roles)
+               └── N:M → permissions (via role_permissions)
 
 stocks
   ├── N:1 → sectors
   ├── 1:1 → stock_fundamentals
   ├── 1:N → stock_prices
   ├── N:M → news (via news_stock_map)
-  └── 1:1 → ai_analysis_cache
+  ├── 1:1 → ai_analysis_cache
+  ├── 1:N → earnings_calendar
+  ├── 1:N → shareholding_patterns
+  ├── 1:N → bulk_block_deals
+  ├── 1:N → insider_trades
+  ├── 1:N → dividend_calendar
+  ├── 1:N → stock_splits
+  └── 1:N → catalysts
 
 tenders
   ├── N:1 → sectors
-  └── 1:N → tender_companies → stocks (optional)
+  └── 1:N → tender_companies → stocks (optional FK)
 
 sectors
   ├── 1:N → stocks
   ├── 1:N → tenders
   └── 1:N → ipo_listings
+
+market_data_sources
+  └── 1:N → market_data_sync_logs
+
+institutional_flows  (standalone — daily aggregate, no user FK)
+economic_events      (standalone — macro events, no user FK)
 ```
 
 ---
@@ -977,10 +1118,17 @@ CREATE POLICY portfolios_owner ON portfolios
 
 ## Seed Data Required
 
-1. `sectors` — seed 20+ Indian market sectors (IT, Banking, Pharma, Auto, FMCG, etc.)
+1. `sectors` — seed 20+ Indian market sectors (IT, Banking, Pharma, Auto, FMCG, Cement, Steel, Power, etc.)
 2. `stocks` — seed NIFTY 500 stock list with symbols, Yahoo symbols (`.NS`), names, sector mapping
 3. `mutual_funds` — sync from mfapi.in on first run (background job)
 4. `stock_fundamentals` — initial sync from Yahoo Finance (background job, runs once on startup)
+5. `roles` — seed: `super_admin`, `admin`, `user`
+6. `permissions` — seed all permission keys:
+   - `stock.view`, `stock.search`, `portfolio.view`, `portfolio.manage`
+   - `watchlist.view`, `watchlist.manage`, `alert.manage`
+   - `admin.view`, `admin.users.view`, `admin.users.manage`, `admin.roles.manage`
+7. `role_permissions` — assign all permissions to `super_admin`; assign `admin.*` permissions to `admin`; assign standard user permissions to `user`
+8. `market_data_sources` — seed 4 providers: NSE (priority 1), Yahoo Finance (priority 2), Finnhub (priority 3), Twelve Data (priority 4)
 
 ---
 
@@ -997,6 +1145,15 @@ CREATE POLICY portfolios_owner ON portfolios
 | portfolio_transactions | (portfolio_id, date DESC) | Transaction history |
 | price_alerts | is_active WHERE true | Alert job queries |
 | ai_analysis_cache | expires_at | Cache expiry check |
+| economic_events | event_date DESC, impact, country | Calendar queries |
+| recently_viewed_stocks | (user_id, stock_id) UNIQUE + (user_id, viewed_at DESC) | Recent history |
+| institutional_flows | trade_date DESC | FII/DII trend queries |
+| earnings_calendar | (stock_id), earnings_date DESC | Earnings calendar |
+| dividend_calendar | (stock_id), ex_date DESC | Dividend calendar |
+| catalysts | (stock_id), expected_date DESC | Catalyst timeline |
+| notifications | (user_id), is_read | Notification center |
+| permissions | group_name | Permission tree grouping |
+| user_roles | user_id | RBAC permission lookup |
 
 ---
 
@@ -1004,5 +1161,6 @@ CREATE POLICY portfolios_owner ON portfolios
 
 - **3NF applied throughout:** No transitive dependencies. Sector data is not duplicated in `stocks` — only `sector_id` FK.
 - **Computed columns avoided:** `invested_value` in `portfolio_holdings` is stored (denormalized) intentionally for query performance, but always recalculated on write via backend service.
-- **JSONB used sparingly:** Only for `audit_logs.old_data/new_data` where schema is dynamic.
-- **Arrays used for:** `stock_type[]` on stocks (a stock can be both value + dividend), `indices[]` (a stock can be in NIFTY50 AND SENSEX), `risk_factors[]` and `catalysts[]` in AI analysis.
+- **JSONB used sparingly:** Only for `audit_logs.old_data/new_data` and `tax_reports.report_data` where schema is dynamic.
+- **Arrays used for:** `stock_type[]` on stocks (a stock can be both value + dividend), `indices[]` (a stock can be in NIFTY50 AND SENSEX), `risk_factors[]` and `catalysts[]` in AI analysis, `affected_sectors[]` in economic_events.
+- **No `role` column on `users`:** Roles managed exclusively via `user_roles` → `roles` → `role_permissions` → `permissions` (proper RBAC, not a flat string column).

@@ -495,48 +495,104 @@ SLoader
 
 ## Watchlist Wiring
 
-- On load: `watchlistService.getAll()` → `GET /watchlists` → returns all watchlists with items + live prices
-- Add stock to watchlist: `POST /watchlists/:id/stocks` with `{ stock_id }`
+- On load: `watchlistService.getAll()` → `GET /api/v1/watchlists` → returns all watchlists with items + live prices
+- Add stock to watchlist: `POST /api/v1/watchlists/:id/stocks` with `{ stock_id }`
 
 ### Watchlist Notes
-- `watchlistService.addNote(id, payload)` → `POST /watchlists/:id/notes`
-- `watchlistService.getNotes(id)` → `GET /watchlists/:id/notes`
+- `watchlistService.addNote(id, payload)` → `POST /api/v1/watchlists/:id/notes`
+- `watchlistService.getNotes(id)` → `GET /api/v1/watchlists/:id/notes`
 
 Payload:
-{
-  "stock_id": "uuid",
-  "note": "Buy below 500"
-}
+```json
+{ "stock_id": "uuid", "note": "Buy below 500" }
+```
 
 ### Watchlist Tags
 
-- `watchlistService.addTag(id, payload)` → `POST /watchlists/:id/tags`
-- `watchlistService.getTags(id)` → `GET /watchlists/:id/tags`
+- `watchlistService.addTag(id, payload)` → `POST /api/v1/watchlists/:id/tags`
+- `watchlistService.getTags(id)` → `GET /api/v1/watchlists/:id/tags`
 
 Payload:
-{
-  "stock_id": "uuid",
-  "tag": "undervalued"
-}
-- Live prices: poll `GET /stocks/:symbol/quote` every 60s for watchlist symbols
+```json
+{ "stock_id": "uuid", "tag": "undervalued" }
+```
+- Live prices: poll `GET /api/v1/stocks/:symbol/quote` every 60s for watchlist symbols
 
 ---
 
-## Alert Wiring
+## Market Status Wiring
 
-- Create alert: `alertService.createAlert({ stock_id, condition, target_value })` → `POST /alerts`
-- List alerts: `GET /alerts` → show in settings or watchlist page
-- Backend Bull job checks alerts every 60s → sends email via SendGrid if triggered
+- `stockService.getMarketStatus()` → `GET /api/v1/market/status`
+- Call on `MainLayout` mount and every 60 seconds → update a shared marketStatus in stockStore
+- Show status chip in topbar: green "Market Open" / red "Market Closed" / yellow "Pre-Market"
+- Response: `{ isOpen: bool, session: 'pre-market'|'normal'|'post-market'|'closed', nextOpen: ISO, nextClose: ISO, holidays: [] }`
+
+---
+
+## FII/DII Activity Wiring
+
+- `stockService.getFiiDiiActivity()` → `GET /api/v1/market/fii-dii`
+- Called once on Dashboard page mount
+- Response: `{ date, fii_buy_cr, fii_sell_cr, fii_net_cr, dii_buy_cr, dii_sell_cr, dii_net_cr }`
+- `stockService.getFiiDiiHistory(days=30)` → `GET /api/v1/market/fii-dii/history?days=30`
+- Response: array of daily rows for trend chart on Dashboard
 
 ---
 
-## Notification Center
+## Recently Viewed Wiring
 
-notificationService.getNotifications()
-notificationService.markRead(id)
-notificationService.updatePreferences(payload)
+- On every `StockDetail` page mount → fire and forget: `stockService.markViewed(symbol)` → `POST /api/v1/stocks/:symbol/viewed`
+- Dashboard sidebar / topbar recent section → `stockService.getRecentlyViewed()` → `GET /api/v1/stocks/recently-viewed`
+- Response: `[{ symbol, company_name, logo_url, viewed_at }]` (last 10)
 
 ---
+
+## Dividend Income Wiring (Portfolio Page)
+
+- Dividend Income tab in Portfolio page → `portfolioService.getDividendIncome(year)` → `GET /api/v1/portfolio/dividend-income?year=2026`
+- Response: `{ total_income_cr, paid_cr, pending_cr, chart: [{ month, amount }], projected_annual_cr }`
+
+---
+
+## SIP & DRIP Calculator Wiring
+
+- Goals page SIP suggestion → `calculatorService.computeSip(payload)` → `POST /api/v1/calculator/sip`
+- Body: `{ target_corpus, years, expected_cagr, inflation_rate }`
+- Response: `{ monthly_sip, total_invested, total_corpus, inflation_adjusted_corpus, year_by_year: [{year, corpus}] }`
+- DRIP planner → `calculatorService.computeDrip(payload)` → `POST /api/v1/calculator/drip`
+- Body: `{ symbol, shares, years }`
+- Response: `{ initial_investment, final_corpus, projected_passive_income, year_by_year: [] }`
+
+---
+
+## Notification Preferences Wiring
+
+- Settings page Notifications tab → on load: `notificationService.getPreferences()` → `GET /api/v1/notifications/preferences`
+- On save: `notificationService.updatePreferences(payload)` → `PATCH /api/v1/notifications/preferences`
+- Body: `{ email_enabled, push_enabled, price_alerts, earnings_alerts, dividend_alerts, news_alerts, insider_alerts }`
+
+---
+
+## Comparison Wiring
+
+- CompareStocks page: multi-symbol input → user adds up to 5 symbols
+- On each symbol add/remove → `comparisonService.compare(symbols)` → `POST /api/v1/compare`
+- Body: `{ symbols: ['RELIANCE', 'TCS', 'INFY'] }`
+- Response: `{ stocks: [{ symbol, company_name, valuation{}, profitability{}, growth{}, debt{}, dividends{} }] }`
+- Render side-by-side table; best value in each row highlighted green
+
+---
+
+## Admin Wiring
+
+- `adminService.getUsers(pagination, search)` → `GET /api/v1/admin/users`
+- `adminService.getSystemHealth()` → `GET /api/v1/admin/system-health`
+  - Response: `{ redis: { status, latency_ms }, db: { status, latency_ms }, providers: [{ name, status, last_success, latency_ms }], jobs: [{ name, last_run, next_run, status }] }`
+- `adminService.getSyncStatus()` → `GET /api/v1/admin/sync-status`
+  - Response: `[{ job_name, last_run_at, next_run_at, success_count, fail_count, last_error }]`
+- `adminService.getLogs(filters)` → `GET /api/v1/admin/audit-logs`
+- `adminService.getFailedJobs()` → `GET /api/v1/admin/failed-jobs`
+- `adminService.retryJob(id)` → `POST /api/v1/admin/retry-job/:id`
 
 ## Error Handling (Frontend)
 
@@ -560,17 +616,28 @@ For 422/400 validation errors — show field-level errors if applicable.
 
 ## Real-Time Data Strategy
 
-Since WebSockets are not implemented in free tier, use polling:
+Since WebSockets are not implemented in free tier, use polling. All polling uses `setInterval` started on component mount and cleared in `useEffect` cleanup (store ref in `useRef`).
 
-| Feature | Poll Interval | Condition |
-|---------|--------------|-----------|
-| Live Indices (Home) | 30s | Always on Home page |
-| Stock Quote (Detail) | 60s | While on StockDetail page |
-| Watchlist Prices | 60s | While Watchlist page is open |
-| Portfolio P&L | 2min | While Portfolio page is open |
-| Alert Check | Server-side | Bull job, every 60s |
+| Feature | Poll Interval | Where | Service Call |
+|---------|--------------|-------|-------------|
+| Live Indices | 30s | Home page | `stockService.getLiveIndices()` |
+| Market Status | 60s | MainLayout (always) | `stockService.getMarketStatus()` |
+| Stock Quote | 60s | StockDetail page | `stockService.getQuote(symbol)` |
+| Watchlist Prices | 60s | Watchlist page | `stockService.getQuote()` per symbol (batched) |
+| Portfolio P&L | 2min | Portfolio page | `portfolioService.getSummary()` |
+| Notification Count | 2min | MainLayout (always) | `notificationService.getAll({ limit:1 })` → use `pagination.total` as unread count |
+| FII/DII Data | Once on mount | Dashboard | `stockService.getFiiDiiActivity()` |
+| Alert Check | Server-side only | — | Bull job every 60s, no frontend polling |
 
-All polling uses `setInterval` started on component mount, cleared on unmount.
+**SSE Upgrade Path (optional future enhancement):**
+Replace polling with Server-Sent Events for real-time without WebSocket overhead:
+```js
+// Backend: GET /api/v1/stream/quotes?symbols=RELIANCE,TCS
+// Frontend:
+const es = new EventSource(`${API_BASE}/stream/quotes?symbols=${symbols.join(',')}`, { withCredentials: true })
+es.onmessage = (e) => stockStore.getState().setQuote(JSON.parse(e.data))
+// Close on unmount: es.close()
+```
 
 ---
 
@@ -599,6 +666,8 @@ GOOGLE_CLIENT_SECRET=<google-oauth-secret>
 ALPHA_VANTAGE_KEY=<from alphavantage.co free>
 NEWS_API_KEY=<from newsapi.org free>
 GEMINI_API_KEY=<from ai.google.dev free>
+FINNHUB_API_KEY=<from finnhub.io free>
+TWELVE_DATA_API_KEY=<from twelvedata.com free>
 FRONTEND_URL=http://localhost:5173
 PORT=5000
 NODE_ENV=development
@@ -622,14 +691,19 @@ const corsOptions = {
 
 ## Free API Limits & Mitigation
 
-| API | Free Limit | Strategy |
-|-----|-----------|----------|
-| Yahoo Finance (yahoo-finance2) | Unofficial, no key | Cache aggressively, respect rate limits |
-| NewsAPI.org | 1000 req/day | Cache 5min, batch fetch, Bull job |
-| Alpha Vantage | 25 req/day | Use only for missing data, cache 24hr |
-| mfapi.in | Unlimited | Cache 1hr |
-| Google Gemini Flash | 15 RPM, 1M TPD | Cache AI analysis 24hr per stock |
-| NSE India (unofficial) | Unofficial | Cache 5min, set proper headers |
+| API | Free Limit | Priority | Strategy |
+|-----|-----------|----------|----------|
+| NSE India (unofficial) | No official limit | 1st — real-time | Manage cookies in Redis, cache 30s–60s, respect rate |
+| yahoo-finance2 | Unofficial, no key | 2nd — ~15min delay | Cache aggressively, 60s quotes, 5min history |
+| Finnhub.io | 60 req/min free | 3rd — fallback | Used only when NSE + Yahoo both fail |
+| Twelve Data | 800 req/day free | 4th — last resort | Reserved for history gaps, cache 5min |
+| NewsAPI.org | 1000 req/day free | Primary news | Cache 5min, batch by job |
+| Google News RSS | Unlimited free | Secondary news | Deduplicate with NewsAPI by URL hash |
+| mfapi.in | Unlimited free | MF data | Cache 1hr |
+| Gemini Flash API | 15 RPM, 1M tokens/day | AI analysis | Cache 24hr per stock, batch sentiment |
+| Alpha Vantage | 25 req/day free | Earnings fallback | Cache 12hr |
+| FRED API | Unlimited free | US economic events | Cache 6hr |
+| RBI RSS | Unlimited free | India economic events | Cache 6hr |
 
 ---
 
