@@ -1,0 +1,6 @@
+{
+  "name": "Architectural Validation Engine",
+  "description": "An interactive, fully-wired production foundation for StockSense AI featuring decoupled Axios refresh-token queues and state management.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
