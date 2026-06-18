@@ -1,0 +1,94 @@
+@import "tailwindcss";
+
+@theme {
+  --color-brand-cyan: var(--brand-cyan);
+  --color-brand-amber: var(--brand-amber);
+  --color-brand-dark: var(--brand-dark);
+  --color-brand-panel: var(--brand-panel);
+  --font-mono: 'JetBrains Mono', 'Fira Code', 'Courier New', Courier, monospace;
+}
+
+:root {
+  --brand-cyan: #0ea5e9; /* Professional slate dynamic sky blue */
+  --brand-amber: #f59e0b; /* Professional warm amber warning indicator */
+  --brand-dark: #090d16;  /* Deep neutral charcoal dark backdrop */
+  --brand-panel: rgba(15, 23, 42, 0.8); /* Solid slate-panel backing */
+}
+
+.theme-light {
+  /* Legacy light option removed. Soft dark fallback */
+  --brand-cyan: #0ea5e9;
+  --brand-amber: #f59e0b;
+  --brand-dark: #090d16;
+  --brand-panel: rgba(15, 23, 42, 0.8);
+}
+
+.theme-amber {
+  --brand-cyan: #f59e0b;
+  --brand-amber: #d97706;
+  --brand-dark: #0f0b06;
+  --brand-panel: rgba(26, 18, 10, 0.9);
+}
+
+.theme-emerald {
+  --brand-cyan: #10b981;
+  --brand-amber: #10b981;
+  --brand-dark: #030a06;
+  --brand-panel: rgba(6, 20, 13, 0.9);
+}
+
+@layer utilities {
+  .glass-panel {
+    background: var(--brand-panel);
+    backdrop-filter: blur(16px);
+    border: 1px solid rgba(255, 255, 255, 0.06); /* Precise flat borders instead of neon colored ones */
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+  }
+  .neon-border-cyan {
+    border-left: 3px solid var(--brand-cyan);
+  }
+  .neon-border-amber {
+    border-left: 3px solid var(--brand-amber);
+  }
+  .neon-border-red {
+    border-left: 3px solid #ef4444;
+  }
+  .neon-border-green {
+    border-left: 3px solid #10b981;
+  }
+  .neon-text-cyan {
+    color: var(--brand-cyan);
+  }
+  .neon-text-amber {
+    color: var(--brand-amber);
+  }
+  .neon-text-red {
+    color: #ef4444;
+  }
+  .scan-line {
+    display: none; /* No scanlines in professional stock charts */
+  }
+  .mono-font {
+    font-family: 'JetBrains Mono', 'Fira Code', 'Courier New', Courier, monospace;
+  }
+}
+
+/* Custom sleek, ultra-slim scrollbar for dashboards & sidebar */
+.custom-scrollbar::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 999px;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: rgba(14, 165, 233, 0.3);
+}
+.custom-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.1) transparent;
+}
