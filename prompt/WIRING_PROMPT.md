@@ -9,7 +9,7 @@ This document defines every contract point between the React frontend and the No
 
 ### Frontend (`.env`)
 ```
-VITE_API_BASE_URL=http://localhost:5000/api/v1
+VITE_API_BASE_URL=http://localhost:5000
 ```
 
 ### `services/apiClient.js` (Frontend)
@@ -495,12 +495,12 @@ SLoader
 
 ## Watchlist Wiring
 
-- On load: `watchlistService.getAll()` → `GET /api/v1/watchlists` → returns all watchlists with items + live prices
-- Add stock to watchlist: `POST /api/v1/watchlists/:id/stocks` with `{ stock_id }`
+- On load: `watchlistService.getAll()` → `GET /watchlists` → returns all watchlists with items + live prices
+- Add stock to watchlist: `POST /watchlists/:id/stocks` with `{ stock_id }`
 
 ### Watchlist Notes
-- `watchlistService.addNote(id, payload)` → `POST /api/v1/watchlists/:id/notes`
-- `watchlistService.getNotes(id)` → `GET /api/v1/watchlists/:id/notes`
+- `watchlistService.addNote(id, payload)` → `POST /watchlists/:id/notes`
+- `watchlistService.getNotes(id)` → `GET /watchlists/:id/notes`
 
 Payload:
 ```json
@@ -509,20 +509,20 @@ Payload:
 
 ### Watchlist Tags
 
-- `watchlistService.addTag(id, payload)` → `POST /api/v1/watchlists/:id/tags`
-- `watchlistService.getTags(id)` → `GET /api/v1/watchlists/:id/tags`
+- `watchlistService.addTag(id, payload)` → `POST /watchlists/:id/tags`
+- `watchlistService.getTags(id)` → `GET /watchlists/:id/tags`
 
 Payload:
 ```json
 { "stock_id": "uuid", "tag": "undervalued" }
 ```
-- Live prices: poll `GET /api/v1/stocks/:symbol/quote` every 60s for watchlist symbols
+- Live prices: poll `GET /stocks/:symbol/quote` every 60s for watchlist symbols
 
 ---
 
 ## Market Status Wiring
 
-- `stockService.getMarketStatus()` → `GET /api/v1/market/status`
+- `stockService.getMarketStatus()` → `GET /market/status`
 - Call on `MainLayout` mount and every 60 seconds → update a shared marketStatus in stockStore
 - Show status chip in topbar: green "Market Open" / red "Market Closed" / yellow "Pre-Market"
 - Response: `{ isOpen: bool, session: 'pre-market'|'normal'|'post-market'|'closed', nextOpen: ISO, nextClose: ISO, holidays: [] }`
@@ -531,35 +531,35 @@ Payload:
 
 ## FII/DII Activity Wiring
 
-- `stockService.getFiiDiiActivity()` → `GET /api/v1/market/fii-dii`
+- `stockService.getFiiDiiActivity()` → `GET /market/fii-dii`
 - Called once on Dashboard page mount
 - Response: `{ date, fii_buy_cr, fii_sell_cr, fii_net_cr, dii_buy_cr, dii_sell_cr, dii_net_cr }`
-- `stockService.getFiiDiiHistory(days=30)` → `GET /api/v1/market/fii-dii/history?days=30`
+- `stockService.getFiiDiiHistory(days=30)` → `GET /market/fii-dii/history?days=30`
 - Response: array of daily rows for trend chart on Dashboard
 
 ---
 
 ## Recently Viewed Wiring
 
-- On every `StockDetail` page mount → fire and forget: `stockService.markViewed(symbol)` → `POST /api/v1/stocks/:symbol/viewed`
-- Dashboard sidebar / topbar recent section → `stockService.getRecentlyViewed()` → `GET /api/v1/stocks/recently-viewed`
+- On every `StockDetail` page mount → fire and forget: `stockService.markViewed(symbol)` → `POST /stocks/:symbol/viewed`
+- Dashboard sidebar / topbar recent section → `stockService.getRecentlyViewed()` → `GET /stocks/recently-viewed`
 - Response: `[{ symbol, company_name, logo_url, viewed_at }]` (last 10)
 
 ---
 
 ## Dividend Income Wiring (Portfolio Page)
 
-- Dividend Income tab in Portfolio page → `portfolioService.getDividendIncome(year)` → `GET /api/v1/portfolio/dividend-income?year=2026`
+- Dividend Income tab in Portfolio page → `portfolioService.getDividendIncome(year)` → `GET /portfolio/dividend-income?year=2026`
 - Response: `{ total_income_cr, paid_cr, pending_cr, chart: [{ month, amount }], projected_annual_cr }`
 
 ---
 
 ## SIP & DRIP Calculator Wiring
 
-- Goals page SIP suggestion → `calculatorService.computeSip(payload)` → `POST /api/v1/calculator/sip`
+- Goals page SIP suggestion → `calculatorService.computeSip(payload)` → `POST /calculator/sip`
 - Body: `{ target_corpus, years, expected_cagr, inflation_rate }`
 - Response: `{ monthly_sip, total_invested, total_corpus, inflation_adjusted_corpus, year_by_year: [{year, corpus}] }`
-- DRIP planner → `calculatorService.computeDrip(payload)` → `POST /api/v1/calculator/drip`
+- DRIP planner → `calculatorService.computeDrip(payload)` → `POST /calculator/drip`
 - Body: `{ symbol, shares, years }`
 - Response: `{ initial_investment, final_corpus, projected_passive_income, year_by_year: [] }`
 
@@ -567,8 +567,8 @@ Payload:
 
 ## Notification Preferences Wiring
 
-- Settings page Notifications tab → on load: `notificationService.getPreferences()` → `GET /api/v1/notifications/preferences`
-- On save: `notificationService.updatePreferences(payload)` → `PATCH /api/v1/notifications/preferences`
+- Settings page Notifications tab → on load: `notificationService.getPreferences()` → `GET /notifications/preferences`
+- On save: `notificationService.updatePreferences(payload)` → `PATCH /notifications/preferences`
 - Body: `{ email_enabled, push_enabled, price_alerts, earnings_alerts, dividend_alerts, news_alerts, insider_alerts }`
 
 ---
@@ -576,7 +576,7 @@ Payload:
 ## Comparison Wiring
 
 - CompareStocks page: multi-symbol input → user adds up to 5 symbols
-- On each symbol add/remove → `comparisonService.compare(symbols)` → `POST /api/v1/compare`
+- On each symbol add/remove → `comparisonService.compare(symbols)` → `POST /compare`
 - Body: `{ symbols: ['RELIANCE', 'TCS', 'INFY'] }`
 - Response: `{ stocks: [{ symbol, company_name, valuation{}, profitability{}, growth{}, debt{}, dividends{} }] }`
 - Render side-by-side table; best value in each row highlighted green
@@ -585,14 +585,14 @@ Payload:
 
 ## Admin Wiring
 
-- `adminService.getUsers(pagination, search)` → `GET /api/v1/admin/users`
-- `adminService.getSystemHealth()` → `GET /api/v1/admin/system-health`
+- `adminService.getUsers(pagination, search)` → `GET /admin/users`
+- `adminService.getSystemHealth()` → `GET /admin/system-health`
   - Response: `{ redis: { status, latency_ms }, db: { status, latency_ms }, providers: [{ name, status, last_success, latency_ms }], jobs: [{ name, last_run, next_run, status }] }`
-- `adminService.getSyncStatus()` → `GET /api/v1/admin/sync-status`
+- `adminService.getSyncStatus()` → `GET /admin/sync-status`
   - Response: `[{ job_name, last_run_at, next_run_at, success_count, fail_count, last_error }]`
-- `adminService.getLogs(filters)` → `GET /api/v1/admin/audit-logs`
-- `adminService.getFailedJobs()` → `GET /api/v1/admin/failed-jobs`
-- `adminService.retryJob(id)` → `POST /api/v1/admin/retry-job/:id`
+- `adminService.getLogs(filters)` → `GET /admin/audit-logs`
+- `adminService.getFailedJobs()` → `GET /admin/failed-jobs`
+- `adminService.retryJob(id)` → `POST /admin/retry-job/:id`
 
 ## Error Handling (Frontend)
 
@@ -632,7 +632,7 @@ Since WebSockets are not implemented in free tier, use polling. All polling uses
 **SSE Upgrade Path (optional future enhancement):**
 Replace polling with Server-Sent Events for real-time without WebSocket overhead:
 ```js
-// Backend: GET /api/v1/stream/quotes?symbols=RELIANCE,TCS
+// Backend: GET /stream/quotes?symbols=RELIANCE,TCS
 // Frontend:
 const es = new EventSource(`${API_BASE}/stream/quotes?symbols=${symbols.join(',')}`, { withCredentials: true })
 es.onmessage = (e) => stockStore.getState().setQuote(JSON.parse(e.data))
@@ -645,7 +645,7 @@ es.onmessage = (e) => stockStore.getState().setQuote(JSON.parse(e.data))
 
 ### Frontend `.env`
 ```
-VITE_API_BASE_URL=http://localhost:5000/api/v1
+VITE_API_BASE_URL=http://localhost:5000
 VITE_GOOGLE_CLIENT_ID=<your-google-oauth-client-id>
 ```
 
