@@ -1,6 +1,17 @@
 # StockSense AI — Backend Build Prompt (Node.js + Express)
 
 ## Overview
+Data Freshness Rules
+
+- Quotes maximum age: 60 seconds
+- News maximum age: 5 minutes
+- Tender maximum age: 15 minutes
+- Fundamentals maximum age: 24 hours
+- Mutual Fund maximum age: 24 hours
+
+Any data exceeding freshness threshold must be marked stale.
+Frontend must display freshness status.
+
 Build a production-grade REST API backend for **StockSense AI**. The backend acts as the sole data layer between the React frontend and all external APIs (market data, news, AI) and Supabase (PostgreSQL). Every API request is authenticated via JWT. No frontend component calls any external API directly.
 
 ---
@@ -41,6 +52,7 @@ backend/
 │   ├── validationMiddleware.js       ← Joi schema runner
 │   ├── errorMiddleware.js            ← Central error handler
 │   └── requestLoggerMiddleware.js    ← Morgan + winston
+|   └── permissionMiddleware.js    example authenticate, authorize('stock.view')
 │
 ├── utils/
 │   ├── AppError.js                   ← Custom error class
@@ -54,6 +66,14 @@ backend/
 ├── jobs/
 │   ├── newsAggregatorJob.js          ← Bull job: fetch & store news every 5 min
 │   └── marketDataJob.js              ← Bull job: refresh live quotes cache
+|   ├── marketHealthMonitorJob.js
+│   └── earningsSyncJob.js              ← Bull job: sync earnings calendar + earnings results
+│   └── dividendSyncJob.js              ← Bull job: sync dividend calendar +  stock split events
+│   └── insiderTradeSyncJob.js          ← Bull job: sync insider trades + bulk/block deals
+│   └── economicCalendarSyncJob.js      ← Bull job: sync macroeconomic events
+│   └── institutionalFlowSyncJob.js     ← Bull job: sync FII/DII daily activity
+│   └── notificationDispatchJob.js      ← Bull job: process and send user notifications
+│   └── alertCheckerJob.js              ← Bull job: evaluate price alerts and trigger notifications
 │
 ├── features/
 │   ├── auth/
@@ -103,20 +123,98 @@ backend/
 │   │   ├── alertController.js
 │   │   ├── alertService.js
 │   │   └── alertRepository.js
-│   │
+|   |
 │   └── aiAnalysis/
-│       ├── aiAnalysisApis.js
-│       ├── aiAnalysisController.js
-│       ├── aiAnalysisService.js
-│       └── aiAnalysisRepository.js
-│
+│   |   ├── aiAnalysisApis.js
+│   |   ├── aiAnalysisController.js
+│   |   ├── aiAnalysisService.js
+│   |   └── aiAnalysisRepository.js
+|   |
+|   ├── earnings/
+│   |   ├── earningsApis.js
+│   |   ├── earningsController.js
+│   |   ├── earningsService.js
+│   |   └── earningsRepository.js
+│   |
+|   ├── calendar/
+│   |   ├── calendarApis.js
+│   |   ├── calendarController.js
+│   |   ├── calendarService.js
+│   |   └── calendarRepository.js
+|   ├── role/
+│   |   ├── roleApis.js
+│   |   ├── roleController.js
+│   |   ├── roleService.js
+│   |   └── roleRepository.js
+│   |
+|   ├── permission/
+│   |   ├── permissionApis.js
+│   |   ├── permissionController.js
+│   |   ├── permissionService.js
+│   |   └── permissionRepository.js
+│   |
+|   ├── dividend/
+│   |   ├── dividendApis.js
+│   |   ├── dividendController.js
+│   |   ├── dividendService.js
+│   |   └── dividendRepository.js
+│   |
+|   ├── goals/
+│   |   ├── goalsApis.js
+│   |   ├── goalsController.js
+│   |   ├── goalsService.js
+│   |   └── goalsRepository.js
+│   |
+|   ├── notification/
+│   |   ├── notificationApis.js
+│   |   ├── notificationController.js
+│   |   ├── notificationService.js
+│   |   └── notificationRepository.js
+│   |
+|   ├── admin/
+│   |   ├── adminApis.js
+│   |   ├── adminController.js
+│   |   ├── adminService.js
+│   |   └── adminRepository.js
+│   |
+|   ├── tax/
+|   │   ├── taxApis.js
+|   │   ├── taxController.js
+|   │   ├── taxService.js
+|   │   └── taxRepository.js
+│   |
+|   ├── comparison/
+|   │   ├── comparisonApis.js
+|   │   ├── comparisonController.js
+|   │   ├── comparisonService.js
+|   │   └── comparisonRepository.js
+│   |
+|   ├── shareholding/
+|   │   ├── shareholdingApis.js
+|   │   ├── shareholdingController.js
+|   │   ├── shareholdingService.js
+|   │   └── shareholdingRepository.js
+│   |
+|   ├── screenerPreset/
+|   │   ├── screenerPresetApis.js
+|   │   ├── screenerPresetController.js
+|   │   ├── screenerPresetService.js
+|   │   └── screenerPresetRepository.js
+│   |
 └── externalApis/
     ├── yahooFinanceClient.js         ← yahoo-finance2 wrapper
     ├── newsApiClient.js              ← NewsAPI.org wrapper
     ├── alphaVantageClient.js         ← Alpha Vantage free tier
     ├── mfApiClient.js                ← mfapi.in (free Indian MF data)
     ├── nseClient.js                  ← NSE India unofficial endpoints
-    └── geminiClient.js               ← Google Gemini (free tier) for AI analysis
+    ├── dataProviderManager.js
+    ├── finnhubClient.js
+    ├── twelveDataClient.js
+    ├── googleNewsClient.js
+    ├── economicCalendarClient.js
+    ├── dividendClient.js
+    ├── shareholdingClient.js
+    └── geminiClient.js               ← Google Gemini (free tier) for AI        analysis
 ```
 
 ---
@@ -129,10 +227,41 @@ backend/
 // 3. Apply middleware: helmet(), cors(corsOptions), express.json(), morgan
 // 4. Apply requestLoggerMiddleware
 // 5. Mount all feature routers under /api/v1/
+app.use('/api/v1/auth', authApis)
+app.use('/api/v1/stocks', stockApis)
+app.use('/api/v1/screener', screenerApis)
+app.use('/api/v1/portfolio', portfolioApis)
+app.use('/api/v1/mutual-funds', mutualFundApis)
+app.use('/api/v1/news', newsApis)
+app.use('/api/v1/watchlists', watchlistApis)
+app.use('/api/v1/alerts', alertApis)
+app.use('/api/v1/ai-analysis', aiAnalysisApis)
+
+app.use('/api/v1/earnings', earningsApis)
+app.use('/api/v1/calendar', calendarApis)
+app.use('/api/v1/dividends', dividendApis)
+app.use('/api/v1/goals', goalsApis)
+app.use('/api/v1/notifications', notificationApis)
+app.use('/api/v1/admin', adminApis)
+app.use('/api/v1/tax', taxApis)
+app.use('/api/v1/compare', comparisonApis)
+app.use('/api/v1/shareholding', shareholdingApis)
+app.use('/api/v1/screener-presets', screenerPresetApis)
+app.use('/api/v1/roles', roleApis)
+app.use('/api/v1/permissions', permissionApis)
 // 6. Mount 404 handler after all routes
 // 7. Mount errorMiddleware as last middleware (4 args)
 // 8. Connect Redis, verify DB connection
-// 9. Start Bull jobs: newsAggregatorJob, marketDataJob
+// 9. Start Bull jobs:
+// newsAggregatorJob
+// marketDataJob
+// earningsSyncJob
+// dividendSyncJob
+// insiderTradeSyncJob
+// economicCalendarSyncJob
+// notificationDispatchJob
+// alertCheckerJob
+// marketHealthMonitorJob
 // 10. app.listen(PORT)
 ```
 
@@ -179,7 +308,7 @@ FRONTEND_URL=http://localhost:5173
 ```js
 // Extract Bearer token from Authorization header
 // Verify with jwt.verify(token, JWT_SECRET)
-// On success: attach decoded payload as req.user = { userId, email, role }
+// On success: attach decoded payload as req.user = {userId,email,roles,permissions}
 // On failure: throw AppError(401, 'UNAUTHORIZED', 'Invalid or expired token')
 // Export: authenticate (used on all protected routes)
 ```
@@ -259,6 +388,27 @@ export const TABLES = {
   TENDER_COMPANIES: 'tender_companies',
   SECTORS: 'sectors',
   AUDIT_LOGS: 'audit_logs',
+  EARNINGS_CALENDAR: 'earnings_calendar',
+  SHAREHOLDING_PATTERNS: 'shareholding_patterns',
+  BULK_BLOCK_DEALS: 'bulk_block_deals',
+  INSIDER_TRADES: 'insider_trades',
+  INSTITUTIONAL_FLOWS: 'institutional_flows',
+  DIVIDEND_CALENDAR: 'dividend_calendar',
+  STOCK_SPLITS: 'stock_splits',
+  INVESTMENT_GOALS: 'investment_goals',
+  WATCHLIST_NOTES: 'watchlist_notes',
+  WATCHLIST_TAGS: 'watchlist_tags',
+  NOTIFICATIONS: 'notifications',
+  SAVED_SCREENERS: 'saved_screeners',
+  RECENTLY_VIEWED_STOCKS: 'recently_viewed_stocks',
+  ECONOMIC_EVENTS: 'economic_events',
+  TAX_REPORTS: 'tax_reports',
+  MARKET_DATA_SOURCES: 'market_data_sources',
+  MARKET_DATA_SYNC_LOGS: 'market_data_sync_logs',
+  ROLES: 'roles',
+  PERMISSIONS: 'permissions',
+  ROLE_PERMISSIONS: 'role_permissions',
+  USER_ROLES: 'user_roles',
 }
 ```
 
@@ -365,10 +515,29 @@ GET  /api/v1/stocks/movers/losers       → authenticate → stockController.get
 GET  /api/v1/stocks/indices/live        → stockController.getLiveIndices  ← public
 GET  /api/v1/stocks/:symbol/insiders    → authenticate → stockController.getInsiderActivity
 GET  /api/v1/stocks/ipo/upcoming        → authenticate → stockController.getUpcomingIPOs
+GET  /api/v1/stocks/:symbol/shareholding    → authenticate → stockController.getShareholdingPattern
+GET  /api/v1/stocks/:symbol/dividends       → authenticate → stockController.getDividendHistory
+GET  /api/v1/stocks/:symbol/splits          → authenticate → stockController.getStockSplits
+GET  /api/v1/stocks/:symbol/catalysts       → authenticate → stockController.getCatalysts
+GET  /api/v1/stocks/:symbol/freshness       → authenticate → stockController.getDataFreshness
+GET  /api/v1/stocks/:symbol/bulk-deals      → authenticate → stockController.getBulkAndBlockDeals
+GET  /api/v1/stocks/:symbol/earnings        → authenticate → stockController.getEarningsHistory
+GET  /api/v1/stocks/:symbol/52-week-range   → authenticate → stockController.get52WeekRange
 ```
 
 ### `stockService.js` Logic:
-- `getQuote(symbol)`: check Redis cache (key: `quote:${symbol}`, TTL 60s) → if miss, call `yahooFinanceClient.getQuote(symbol)` → cache → return
+- `getQuote(symbol)`:
+- check Redis cache
+- call dataProviderManager.getQuote(symbol)
+
+dataProviderManager:
+1. nseClient
+2. yahooFinanceClient
+3. finnhubClient
+4. twelveDataClient
+
+Return first successful response with latest timestamp.
+Store source name and sync timestamp.
 - `getHistory(symbol, period, interval)`: cache 5 min → call Yahoo Finance
 - `getValuation(symbol)`: cache 1 hour → Yahoo Finance + compute PE, PEG, PB, dividend yield, EV/EBITDA, price-to-FCF
 - `getFinancials(symbol)`: cache 6 hours → income statement, balance sheet, cash flow from Yahoo Finance
@@ -377,6 +546,14 @@ GET  /api/v1/stocks/ipo/upcoming        → authenticate → stockController.get
 - `getAiAnalysis(symbol)`: check `ai_analysis_cache` table (updated < 24h) → if stale, call Gemini AI with company fundamentals context → store → return
 - `getLiveIndices()`: cache 30s → fetch NIFTY50, SENSEX, NIFTY BANK, NIFTY IT, NIFTY MIDCAP from Yahoo Finance
 - `search(q)`: search stocks table by name/symbol ILIKE pattern
+- `getShareholdingPattern(symbol)`: fetch latest promoter/FII/DII/public holding pattern from DB or external API, cache 24 hours
+- `getDividendHistory(symbol)`: fetch dividend history from DB, sort descending by ex-date
+- `getStockSplits(symbol)`: fetch stock split timeline from DB
+- `getCatalysts(symbol)`: combine upcoming earnings, tenders, government projects, sector events, and important company announcements into a single catalyst timeline
+- `getDataFreshness(symbol)`: returns source metadata (NSE, Yahoo, NewsAPI, Tender API) and latest sync timestamps for frontend freshness badge
+- `getBulkAndBlockDeals(symbol)`: fetch bulk and block deals related to symbol from DB
+- `getEarningsHistory(symbol)`: fetch quarterly earnings, EPS, revenue, surprise %, and next earnings date
+- `get52WeekRange(symbol)`: calculate 52-week high, 52-week low, and current price position in that range
 
 ---
 
@@ -472,7 +649,20 @@ POST   /api/v1/watchlists              → authenticate, validate → watchlistC
 DELETE /api/v1/watchlists/:id          → authenticate → watchlistController.delete
 POST   /api/v1/watchlists/:id/stocks   → authenticate → watchlistController.addStock
 DELETE /api/v1/watchlists/:id/stocks/:symbol → authenticate → watchlistController.removeStock
+POST   /api/v1/watchlists/:id/notes         → authenticate, validate → watchlistController.addNote
+GET    /api/v1/watchlists/:id/notes         → authenticate → watchlistController.getNotes
+POST   /api/v1/watchlists/:id/tags          → authenticate, validate → watchlistController.addTag
+GET    /api/v1/watchlists/:id/tags          → authenticate → watchlistController.getTags
 ```
+
+---
+
+### `watchlistService.js` Logic:
+
+- `addNote(userId, watchlistId, stockSymbol, note)`: save custom note for stock inside watchlist
+- `getNotes(userId, watchlistId)`: fetch all watchlist notes
+- `addTag(userId, watchlistId, tag)`: attach custom tag like "Dividend", "High Risk", "Momentum"
+- `getTags(userId, watchlistId)`: fetch all tags for watchlist
 
 ---
 
@@ -490,6 +680,152 @@ DELETE /api/v1/alerts/:id     → authenticate → alertController.deleteAlert
 - Get cached quote for each symbol
 - If price crosses threshold → send email via SendGrid → mark alert as triggered
 
+---
+
+## Feature: Permissions (`features/permission/`)
+### permissionApi.js Endpoints:
+```
+GET    /api/v1/permissions
+GET    /api/v1/permissions/tree
+GET    /api/v1/permissions/:id
+
+POST   /api/v1/permissions
+PUT    /api/v1/permissions/:id
+DELETE /api/v1/permissions/:id
+```
+---
+
+## Feature: Permissions (`features/roles/`)
+### rolesApi.js Endpoints:
+```
+GET    /api/v1/roles
+GET    /api/v1/roles/:id
+
+POST   /api/v1/roles
+PUT    /api/v1/roles/:id
+DELETE /api/v1/roles/:id
+
+POST   /api/v1/roles/:id/permissions
+DELETE /api/v1/roles/:id/permissions/:permissionId
+```
+---
+
+## Feature: role assignment
+
+```
+POST   /api/v1/users/:id/roles
+DELETE /api/v1/users/:id/roles/:roleId
+```
+---
+
+
+## Feature: Admin (`features/admin/`)
+
+
+### adminApis.js Endpoints:
+```
+GET  /api/v1/admin/users            → authenticate, authorize('admin') → adminController.getUsers
+GET  /api/v1/admin/stats            → authenticate, authorize('admin') → adminController.getSystemStats
+GET  /api/v1/admin/audit-logs       → authenticate, authorize('admin') → adminController.getAuditLogs
+GET  /api/v1/admin/failed-jobs      → authenticate, authorize('admin') → adminController.getFailedJobs
+POST /api/v1/admin/retry-job/:id    → authenticate, authorize('admin') → adminController.retryJob
+```
+---
+
+### adminService.js Logic:
+```
+- `getUsers()`: fetch all users with pagination, filtering, and search
+- `getSystemStats()`: returns active users, API usage, alerts count, watchlist count, and system health metrics
+- `getAuditLogs()`: fetch write operation logs
+- `getFailedJobs()`: fetch failed Bull jobs
+- `retryJob(jobId)`: retry failed async jobs
+```
+---
+
+### marketHealthMonitorJob.js Logic: 
+- Runs every 1 minute
+- Checks all configured data providers
+- Updates market_data_sources table
+- Disables failing providers
+- Enables recovered providers
+- Maintains provider priority order
+
+## Feature: Watchlist (`features/watchlist/`)
+
+### notificationApis.js Endpoints:
+```
+GET    /api/v1/notifications             → authenticate → notificationController.getAll
+PATCH  /api/v1/notifications/:id/read    → authenticate → notificationController.markRead
+PATCH  /api/v1/notifications/read-all    → authenticate → notificationController.markAllRead
+DELETE /api/v1/notifications/:id         → authenticate → notificationController.deleteNotification
+```
+---
+
+### notificationService.js Logic:
+```
+- `getAll(userId)`: fetch user notifications sorted by latest
+- `markRead(userId, notificationId)`: mark single notification as read
+- `markAllRead(userId)`: mark all notifications as read
+- `deleteNotification(userId, notificationId)`: delete a notification
+```
+---
+
+## Feature: Goals (features/goals/)
+
+### goalsApis.js Endpoints:
+```
+POST   /api/v1/goals              → authenticate, validate → goalsController.createGoal
+GET    /api/v1/goals              → authenticate → goalsController.getGoals
+PUT    /api/v1/goals/:id          → authenticate, validate → goalsController.updateGoal
+DELETE /api/v1/goals/:id          → authenticate → goalsController.deleteGoal
+GET    /api/v1/goals/:id/progress → authenticate → goalsController.getGoalProgress
+```
+---
+
+### goalsService.js Logic:
+```
+- `createGoal(userId, data)`: create investment goals (retirement, house, emergency fund)
+- `getGoals(userId)`: fetch all goals
+- `updateGoal(userId, goalId, data)`: update target amount, date, etc.
+- `deleteGoal(userId, goalId)`
+- `getGoalProgress(userId, goalId)`: calculate current progress based on portfolio and MF investments
+```
+---
+
+## Feature: Tax (features/tax/)
+
+### taxApis.js Endpoints:
+```
+GET /api/v1/tax/capital-gains    → authenticate → taxController.getCapitalGains
+GET /api/v1/tax/dividends        → authenticate → taxController.getDividendTax
+GET /api/v1/tax/export           → authenticate → taxController.exportTaxReport
+```
+---
+
+### taxService.js Logic:
+```
+- `getCapitalGains(userId)`: calculate short-term and long-term capital gains
+- `getDividendTax(userId)`: calculate dividend income and taxable amount
+- `exportTaxReport(userId)`: generate downloadable tax report (CSV/PDF)
+```
+---
+
+## Feature: AI Analysis (`features/aiAnalysis/`)
+
+### aiAnalysisApis.js Endpoints:
+```
+GET /api/v1/ai-analysis/:symbol/explain          → authenticate → aiAnalysisController.explainStock
+GET /api/v1/ai-analysis/:symbol/recommendation   → authenticate → aiAnalysisController.getRecommendation
+GET /api/v1/ai-analysis/portfolio/rebalance      → authenticate → aiAnalysisController.getPortfolioRebalance
+```
+---
+
+### aiAnalysisService.js Logic:
+```
+- `explainStock(symbol)`: explains why stock is bullish, bearish, overvalued, or undervalued using valuation + qualitative factors
+- `getRecommendation(symbol)`: returns Buy/Hold/Sell recommendation with reasoning
+- `getPortfolioRebalance(userId)`: AI-based portfolio rebalancing suggestions based on concentration, risk, and sector exposure
+```
 ---
 
 ## External API Clients (`externalApis/`)
@@ -511,6 +847,21 @@ DELETE /api/v1/alerts/:id     → authenticate → alertController.deleteAlert
 ### `nseClient.js`
 - Uses unofficial NSE endpoints (no key needed, but set custom headers)
 - Functions: `getIndexData(index)`, `getBulkDeals()`, `getBlockDeals()`, `getInsiderTrading(symbol)`, `getUpcomingIPOs()`
+
+### `economicCalendarClient.js`
+- Fetches economic events (RBI meetings, inflation releases, GDP data, FED decisions)
+- Functions: getEconomicEvents()
+- Used by calendar module and dashboard economic calendar
+
+### `dividendClient.js`
+- Fetches dividend history and stock split history
+- Functions: getDividendHistory(symbol), getStockSplits(symbol)
+- Used by stock detail page
+
+### `shareholdingClient.js`
+- Fetches promoter/FII/DII/public shareholding patterns
+- Functions: getShareholding(symbol)
+- Used by stock detail shareholding widget
 
 ### `geminiClient.js`
 - Uses Google Gemini API free tier (`gemini-1.5-flash` model, 15 RPM free)
@@ -608,6 +959,41 @@ Paginated format:
 - Fetches all active price alerts
 - Compares with cached quotes
 - Triggers email if condition met
+
+### `earningsSyncJob.js`
+- Queue: earnings-sync
+- Runs every 12 hours
+- Calls earningsService.syncUpcomingEarnings()
+- Stores earnings dates, estimates, and reported values
+
+### `dividendSyncJob.js`
+- Queue: dividend-sync
+- Runs daily
+- Calls dividendService.syncDividendsAndSplits()
+- Updates dividend calendar and stock split timeline
+
+### `insiderTradeSyncJob.js`
+- Queue: insider-trade-sync
+- Runs every market day
+- Calls stockService.syncInsiderTrades()
+- Stores insider trades and bulk/block deals
+
+### `economicCalendarSyncJob.js`
+- Queue: economic-calendar-sync
+- Runs daily
+- Calls calendarService.syncEconomicEvents()
+- Stores RBI, inflation, GDP, repo rate, and other macro events
+
+### `institutionalFlowSyncJob.js`
+- Queue: institutional-flow-sync
+- Runs daily after market close
+- Calls stockService.syncInstitutionalFlows()
+- Stores FII/DII buy/sell data
+
+### `notificationDispatchJob.js`
+- Queue: notification-dispatch
+- Runs every minute
+- Processes alerts, earnings reminders, dividend reminders, and watchlist events
 
 ---
 

@@ -129,6 +129,9 @@ CREATE TABLE stocks (
   is_index_stock    BOOLEAN DEFAULT FALSE,
   indices           VARCHAR(50)[],   -- ['NIFTY50', 'SENSEX', 'NIFTY_BANK']
   is_active         BOOLEAN NOT NULL DEFAULT TRUE,
+  last_synced_at TIMESTAMPTZ,
+  data_source VARCHAR(100),
+  sync_status VARCHAR(50),
   created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at        TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -554,6 +557,9 @@ CREATE TABLE ai_analysis_cache (
   risk_factors    TEXT[],
   catalysts       TEXT[],
   model_used      VARCHAR(100),
+  recommendation       VARCHAR(20),     -- BUY/HOLD/SELL/WATCH
+  confidence_score     NUMERIC(5,2),
+  explanation          TEXT
   generated_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
   expires_at      TIMESTAMPTZ NOT NULL
 );
@@ -616,6 +622,294 @@ CREATE TRIGGER handle_updated_at BEFORE UPDATE ON ipo_listings
   FOR EACH ROW EXECUTE PROCEDURE moddatetime(updated_at);
 ```
 
+## Table 23: `earnings_calendar`
+Earnings Calendar
+
+```sql
+CREATE TABLE earnings_calendar (
+  id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  stock_id            UUID NOT NULL REFERENCES stocks(id) ON DELETE CASCADE,
+  quarter             VARCHAR(20),    -- 'Q1FY26'
+  earnings_date       DATE NOT NULL,
+  expected_eps        NUMERIC(18,4),
+  actual_eps          NUMERIC(18,4),
+  previous_eps        NUMERIC(18,4),
+  surprise_pct        NUMERIC(10,4),
+  revenue_cr          NUMERIC(18,4),
+  net_profit_cr       NUMERIC(18,4),
+  created_at          TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX idx_earnings_stock ON earnings_calendar(stock_id);
+CREATE INDEX idx_earnings_date ON earnings_calendar(earnings_date DESC);
+```
+
+## Table 24
+Shareholding Pattern Tracker
+
+```sql
+CREATE TABLE shareholding_patterns (
+  id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  stock_id              UUID NOT NULL REFERENCES stocks(id) ON DELETE CASCADE,
+  quarter               VARCHAR(20) NOT NULL,
+  promoter_pct          NUMERIC(8,4),
+  fii_pct               NUMERIC(8,4),
+  dii_pct               NUMERIC(8,4),
+  public_pct            NUMERIC(8,4),
+  pledged_pct           NUMERIC(8,4),
+  created_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (stock_id, quarter)
+);
+
+CREATE INDEX idx_shareholding_stock ON shareholding_patterns(stock_id);
+
+```
+
+## Table 25
+
+```sql
+CREATE TABLE bulk_block_deals (
+  id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  stock_id          UUID NOT NULL REFERENCES stocks(id) ON DELETE CASCADE,
+  deal_type         VARCHAR(20) NOT NULL,   -- 'bulk' | 'block'
+  buyer_name        VARCHAR(255),
+  seller_name       VARCHAR(255),
+  quantity          BIGINT,
+  avg_price         NUMERIC(18,4),
+  trade_value_cr    NUMERIC(18,4),
+  trade_date        DATE NOT NULL,
+  created_at        TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX idx_bulk_stock ON bulk_block_deals(stock_id);
+CREATE INDEX idx_bulk_date ON bulk_block_deals(trade_date DESC);
+
+```
+
+## Table 26
+
+```sql
+CREATE TABLE insider_trades (
+  id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  stock_id          UUID NOT NULL REFERENCES stocks(id) ON DELETE CASCADE,
+  person_name       VARCHAR(255) NOT NULL,
+  designation       VARCHAR(255),
+  transaction_type  VARCHAR(20),   -- 'buy' | 'sell'
+  quantity          BIGINT,
+  price             NUMERIC(18,4),
+  transaction_date  DATE NOT NULL,
+  created_at        TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX idx_insider_stock ON insider_trades(stock_id);
+
+```
+
+## Table 27
+
+```sql
+CREATE TABLE institutional_flows (
+  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  trade_date    DATE NOT NULL UNIQUE,
+  fii_buy_cr    NUMERIC(18,4),
+  fii_sell_cr   NUMERIC(18,4),
+  fii_net_cr    NUMERIC(18,4),
+  dii_buy_cr    NUMERIC(18,4),
+  dii_sell_cr   NUMERIC(18,4),
+  dii_net_cr    NUMERIC(18,4),
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+```
+
+## Table 28
+
+```sql
+CREATE TABLE dividend_calendar (
+  id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  stock_id          UUID NOT NULL REFERENCES stocks(id) ON DELETE CASCADE,
+  dividend_amount   NUMERIC(18,4),
+  ex_date           DATE,
+  record_date       DATE,
+  payment_date      DATE,
+  dividend_yield    NUMERIC(10,4),
+  created_at        TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX idx_dividend_stock ON dividend_calendar(stock_id);
+
+```
+## Table 29
+
+```sql
+CREATE TABLE stock_splits (
+  id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  stock_id          UUID NOT NULL REFERENCES stocks(id) ON DELETE CASCADE,
+  split_ratio       VARCHAR(20),
+  ex_date           DATE,
+  record_date       DATE,
+  created_at        TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+```
+
+## Table 30
+
+```sql
+CREATE TABLE investment_goals (
+  id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id           UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  title             VARCHAR(255),
+  goal_type         VARCHAR(50),
+  target_amount     NUMERIC(18,4),
+  current_amount    NUMERIC(18,4),
+  target_date       DATE,
+  expected_cagr     NUMERIC(10,4),
+  created_at        TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+```
+## Table 31
+
+```sql
+CREATE TABLE watchlist_notes (
+  id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  watchlist_item_id UUID NOT NULL REFERENCES watchlist_items(id) ON DELETE CASCADE,
+  note              TEXT NOT NULL,
+  created_at        TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+```
+## Table 32
+
+```sql
+CREATE TABLE watchlist_tags (
+  id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  watchlist_item_id UUID NOT NULL REFERENCES watchlist_items(id) ON DELETE CASCADE,
+  tag               VARCHAR(100) NOT NULL,
+  created_at        TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+```
+## Table 33
+
+```sql
+CREATE TABLE notifications (
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id         UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  type            VARCHAR(50),
+  title           TEXT,
+  message         TEXT,
+  is_read         BOOLEAN DEFAULT FALSE,
+  metadata        JSONB,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX idx_notifications_user ON notifications(user_id);
+CREATE INDEX idx_notifications_read ON notifications(is_read);
+
+```
+## Table 34
+
+```sql
+CREATE TABLE saved_screeners (
+  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id       UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  name          VARCHAR(255),
+  filters       JSONB NOT NULL,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+```
+
+## Table 35
+
+```sql
+CREATE TABLE recently_viewed_stocks (
+  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id       UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  stock_id      UUID NOT NULL REFERENCES stocks(id) ON DELETE CASCADE,
+  viewed_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+```
+---
+
+## Table 36
+
+```sql
+CREATE TABLE market_data_sources (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  source_name VARCHAR(100) UNIQUE NOT NULL,
+  source_type VARCHAR(50),
+  priority_order INTEGER,
+  is_active BOOLEAN DEFAULT TRUE,
+  created_at TIMESTAMPTZ DEFAULT now()
+);
+```
+---
+
+## Table 37
+
+```sql
+CREATE TABLE market_data_sync_logs (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  source_id UUID REFERENCES market_data_sources(id),
+  entity_type VARCHAR(50),
+  entity_key VARCHAR(100),
+  synced_at TIMESTAMPTZ,
+  response_time_ms INTEGER,
+  sync_status VARCHAR(50),
+  error_message TEXT
+);
+
+```
+
+---
+
+## Table 38
+
+```sql
+CREATE TABLE roles (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name VARCHAR(100) UNIQUE NOT NULL,
+  description TEXT
+);
+```
+---
+
+## Table 39
+
+```sql
+CREATE TABLE permissions (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  permission_key VARCHAR(200) UNIQUE NOT NULL,
+  description TEXT
+);
+```
+---
+
+
+## Table 40
+
+```sql
+CREATE TABLE role_permissions (
+  role_id UUID REFERENCES roles(id),
+  permission_id UUID REFERENCES permissions(id),
+  PRIMARY KEY(role_id, permission_id)
+);
+```
+---
+
+
+## Table 41
+
+```sql
+CREATE TABLE user_roles (
+  user_id UUID REFERENCES users(id),
+  role_id UUID REFERENCES roles(id),
+  PRIMARY KEY(user_id, role_id)
+);
+```
 ---
 
 ## Entity Relationship Summary

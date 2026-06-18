@@ -45,6 +45,30 @@ src/
 │   │   └── index.jsx
 │   ├── Watchlist/
 │   │   └── index.jsx
+|   ├── Alerts/
+|   |   └── index.jsx
+|   ├── EconomicCalendar/
+|   |   └── index.jsx
+|   ├── DividendCalendar/
+|   |   └── index.jsx
+|   ├── IPOs/
+|   |   └── index.jsx
+|   ├── Admin/
+|   |   └── index.jsx
+|   ├── Earnings/
+|   |   └── index.jsx
+|   ├── SavedScreeners/
+|   |   └── index.jsx
+|   ├── CompareStocks/
+|   |   └── index.jsx
+|   ├── Goals/
+|   |   └── index.jsx
+|   ├── TaxReports/
+|   |   └── index.jsx
+|   ├── Roles/
+│   |   └── index.jsx
+|   ├── Permissions/
+│   |   └── index.jsx
 │   └── Settings/
 │       └── index.jsx
 │
@@ -77,7 +101,11 @@ src/
 │   │   ├── SAlert/
 │   │   │   └── index.jsx
 │   │   └── SPageHeader/
-│   │       └── index.jsx
+│   │   |   └── index.jsx
+│   |   ├── SDataFreshness/
+│   |   │   └── index.jsx
+|   |   ├── SPermissionTree/
+│   |       └── index.jsx
 │   │
 │   ├── Home/
 │   │   ├── MarketIndexTicker.jsx
@@ -111,8 +139,16 @@ src/
 │   │   └── MFRebalanceSuggestion.jsx
 │   │
 │   └── News/
-│       ├── NewsCard.jsx
-│       └── NewsFilter.jsx
+│   |   ├── NewsCard.jsx
+│   |   └── NewsFilter.jsx
+│   │   ├── EconomicCalendar/
+|   |   ├── DividendCalendar/
+|   |   ├── Earnings/
+|   |   ├── Admin/
+|   |   ├── CompareStocks/
+|   |   ├── Alerts/
+|   |   ├── Goals/
+|   |   ├── TaxReports/
 │
 ├── store/
 │   ├── authStore.js
@@ -121,6 +157,13 @@ src/
 │   ├── mutualFundStore.js
 │   ├── watchlistStore.js
 │   └── newsStore.js
+│   ├── notificationStore.js
+│   ├── calendarStore.js
+│   ├── goalStore.js
+│   ├── adminStore.js
+│   ├── screenerStore.js
+|   ├── roleStore.js
+|   ├── permissionStore.js
 │
 ├── services/
 │   ├── apiClient.js          ← Axios instance, base URL, interceptors
@@ -131,6 +174,14 @@ src/
 │   ├── newsService.js
 │   ├── watchlistService.js
 │   └── screenerService.js
+│   ├── alertService.js 
+│   ├── adminService.js
+│   ├── calendarService.js
+│   ├── ipoService.js
+│   ├── goalService.js
+│   ├── taxService.js
+│   ├── notificationService.js
+│   └── comparisonService.js
 │
 ├── utils/
 │   ├── rules.js              ← All reusable validation rules
@@ -307,6 +358,24 @@ Props:
 
 ### `SPageHeader` — page title bar; props: `title`, `subtitle`, `breadcrumbs: [{label, path}]`, `actions` (right-side buttons)
 
+### `SDataFreshness` — reusable freshness/status component; 
+props:
+- `source`
+- `lastUpdated`
+- `status` (`live`, `delayed`, `stale`)
+- `showIcon`
+
+Displays:
+- Source name (NSE / Yahoo / NewsAPI / Tender Portal)
+- Last synced timestamp
+- freshness indicator
+
+Used in:
+- StockDetail
+- News cards
+- Tender info
+- Economic Calendar
+- AI Summary
 ---
 
 ## Store (Zustand)
@@ -359,21 +428,23 @@ Props:
 ### `pages/Dashboard/index.jsx`
 - Auth required
 - Registers: stockStore, portfolioStore, watchlistStore
-- Renders: portfolio summary card, watchlist quick view, top news, market movers, sector heatmap
+- Renders: portfolio summary card, watchlist quick view, top news, market movers, sector heatmap, FII/DII Activity Widget, Market Status Widget, Economic Calendar Preview, Notification Preview
 
 ### `pages/StockDetail/index.jsx`
 - Auth required
 - Route param: `:symbol`
-- Renders: StockHeader, PriceChart (with timeframe buttons 1D/1W/1M/3M/6M/1Y/5Y), ValuationMetrics, FinancialRatios, QualitativeAnalysis (AI-generated summary from backend), NewsFeed (backend news for this symbol), TenderInfo, PeerComparison
+- Renders: StockHeader, PriceChart (with timeframe buttons 1D/1W/1M/3M/6M/1Y/5Y), ValuationMetrics, FinancialRatios, QualitativeAnalysis (AI-generated summary from backend), AI Recommendation Card, Shareholding Pattern, Insider Trading Feed, Dividend Timeline, Stock Split Timeline, Catalyst Tracker, NewsFeed (backend news for this symbol), TenderInfo, PeerComparison, Data Freshness Badge
 
 ### `pages/StockScreener/index.jsx`
 - Auth required
 - Left panel: ScreenerFilters (industry, sector, dividend yield range, PE range, debt-to-equity range, ROE min, market cap range, stock type: commodity/growth/dividend/value)
 - Right: SDataTable with screener results, sortable, backend search
+- Includes Save Screener button
+- Includes Saved Screeners dropdown
 
 ### `pages/Portfolio/index.jsx`
 - Auth required
-- Tabs: Holdings | Performance | Rebalance
+- Tabs: Holdings | Performance | Rebalance | Goals | Tax Reports | Risk Analysis | Dividend Income
 - Holdings tab: SDataTable of all holdings (symbol, qty, avg price, current price, P&L, P&L%)
 - Performance tab: Recharts line chart of portfolio value over time
 - Rebalance tab: AI-generated rebalance suggestions from backend
@@ -428,12 +499,59 @@ Props:
 2. **Alert System** — user can set price alerts on stocks; bell icon shows count; alerts page under watchlist
 3. **Sentiment Badge** on news cards — colour-coded (green/red/grey) based on backend NLP sentiment score
 4. **Sector Heatmap** on dashboard — grid of sectors coloured by day's performance (Recharts treemap)
-5. **AI Summary Panel** on StockDetail — a card showing AI-written 3-paragraph qualitative analysis (fetched from backend which calls AI API)
+5. **AI Summary Panel** on StockDetail — a card showing AI-written 3-paragraph qualitative analysis with explainability support, showing why the AI generated the summary, key positives, key risks, and confidence score.
 6. **Broker Integration (future)** — settings tab to connect Zerodha/Groww via API key; import actual holdings
 7. **IPO Section** — upcoming IPOs table with open/close date, GMP, subscription status
 8. **52-week High/Low Indicator** — visual gauge on StockDetail
-9. **Insider Trading Feed** — table of recent bulk/block deals pulled from NSE data
+9. **Insider Trading Feed** — table of recent insider trades, promoter buying/selling, director trades, bulk deals, and block deals pulled from NSE and exchange filings. Should show person name, designation, trade type, quantity, price, trade date, and transaction value.
 10. **FII/DII Activity Widget** — daily buy/sell data on dashboard
+11. **Economic Calendar** — dedicated page showing major macroeconomic events like RBI meetings, repo rate changes, inflation data, GDP releases, Fed decisions, unemployment reports, etc. Each event should have impact level (high/medium/low), event date/time, actual vs forecast vs previous values, and affected sectors/stocks.
+
+12. **Dividend Calendar** — page showing upcoming and historical dividends of all stocks with ex-date, record date, payment date, dividend amount, yield %, and filtering by month/year. Should allow sorting by highest yield and upcoming nearest ex-date.
+
+13. **Stock Split Timeline** — timeline component on StockDetail showing all historical stock splits with ratio (e.g., 1:2), ex-date, and adjusted price impact. Useful for understanding stock price history.
+
+14. **Bulk/Block Deals Tracker** — dedicated section showing large institutional trades. Separate tabs for bulk deals and block deals, showing buyer, seller, quantity, average price, trade value, and trade date. Should support filtering by stock and date range.
+
+15. **AI Explainability Engine** — every AI score (risk, value, growth, moat, management) should have explanation. Example: “Risk Score 7/10 because debt increased 25%, promoter pledge rose 8%, and cash flow is declining.” This improves trust in AI recommendations.
+
+16. **Event Impact Engine** — AI reads macro/government/company news and maps impact to sectors and stocks. Example: “Government announces highway project” → positive for cement, steel, EPC, logistics stocks. Show impact confidence score.
+
+17. **Catalyst Tracker** — tracks growth catalysts like capex expansion, new plant launches, exports, order book growth, acquisitions, new product launches, approvals. Shows expected timeline and estimated business impact.
+
+18. **Goal-based Investing** — users can create investment goals like retirement, buying a house, emergency fund, education, etc. Tracks target amount, current progress, expected CAGR, and suggests how much more to invest.
+
+19. **Tax Reporting** — portfolio tax analysis page showing STCG, LTCG, realized gains, unrealized gains, tax liability estimates, and downloadable yearly tax reports.
+
+20. **Dividend Income Tracker** — tracks total dividend income earned, pending dividend payments, dividend CAGR, monthly/yearly charts, and projected passive income.
+
+21. **Watchlist Notes** — users can add custom notes on stocks like “Buy below 500”, “Strong quarterly results”, “Waiting for breakout”. Notes should be visible directly in watchlist.
+
+22. **Watchlist Tags** — allow tagging stocks with custom or predefined tags like breakout, undervalued, cyclical, long-term, high-risk, dividend. Enable filtering by tags.
+
+23. **Notification Center** — centralized notifications for price alerts, earnings alerts, dividends, tenders, insider trades, bulk deals, news events, and AI recommendation changes. Should support email, push, and SMS preferences.
+
+24. **Admin Panel** — internal dashboard for managing system health. Includes user management, stock sync status, news ingestion status, tender sync status, failed background jobs, API health monitoring, alert logs, and system logs.
+
+25. **Earnings Calendar** — upcoming quarterly results, expected EPS, previous EPS, earnings surprise %, and result history. Calendar-based UI with filters by sector/date. Show upcoming and recently announced results.
+
+26. **Shareholding Pattern Tracker** — display promoter, FII, DII, public holdings, pledged shares, and quarterly trend comparison. Include charts for historical holding changes.
+
+27. **Competitor Comparison Engine** — compare multiple stocks side-by-side across valuation (PE, PB, PEG), growth (sales/profit growth), profitability (ROE, ROCE), debt, margins, and technical indicators.
+
+28. **AI Recommendation Engine** — generate Buy / Hold / Sell / Watch recommendations with confidence score, target range, risk level, and reasons based on valuation, momentum, sentiment, and catalysts.
+
+29. **AI Portfolio Risk Analyzer** — analyze portfolio concentration, sector exposure, volatility, correlation risk, and drawdown risk. Show risk score and diversification suggestions.
+
+30. **SIP Planner** — goal-based SIP calculator allowing users to input target corpus, time horizon, expected CAGR, and inflation assumptions. Show required monthly SIP.
+
+31. **Dividend Reinvestment Planner** — simulate dividend reinvestment growth, projected corpus, projected passive income, and compounding effect over time.
+
+32. **Data Freshness Badge** — every stock data block, AI analysis, tender info, insider trades, and news cards must show source name, last synced timestamp, and freshness status.
+
+33. **Market Status Widget** — top dashboard widget showing market open/closed, pre-market, post-market, holiday schedule, and live session timing.
+
+34. **Saved Screeners** — users can save custom screener filters (e.g. high ROE, low debt, dividend stocks) and quickly rerun them.
 
 ---
 

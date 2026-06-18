@@ -21,6 +21,7 @@ const apiClient = axios.create({
   baseURL: import.meta.env.VITE_API_BASE_URL,
   timeout: 15000,
   headers: { 'Content-Type': 'application/json' },
+  withCredentials: true
 })
 
 // Attach token
@@ -52,8 +53,13 @@ apiClient.interceptors.response.use(
       try {
         const refreshToken = useAuthStore.getState().refreshToken
         const res = await axios.post(`${import.meta.env.VITE_API_BASE_URL}/auth/refresh-token`, { refreshToken })
-        const newToken = res.data.data.accessToken
-        useAuthStore.getState().updateTokens(newToken)
+        const { accessToken, refreshToken: newRefreshToken } = res.data.data
+
+        useAuthStore.getState().updateTokens(
+          accessToken,
+          newRefreshToken || refreshToken
+        ) 
+        const newToken = accessToken
         failedQueue.forEach(p => p.resolve(newToken))
         failedQueue = []
         original.headers.Authorization = `Bearer ${newToken}`
@@ -72,8 +78,101 @@ apiClient.interceptors.response.use(
 
 export default apiClient
 ```
+---
+
+## Services Pattern
+```
+All frontend API communication must go through service files.
+
+Rules:
+
+- No component/page should call axios directly
+- No component/page should hardcode API URLs
+- All service files export async functions only
+- Services use apiClient only
+
+Example:
+
+```js
+import apiClient from './apiClient'
+
+export const getQuote = (symbol) =>
+  apiClient.get(`/stocks/${symbol}/quote`)
+
+export const getHistory = (symbol, params) =>
+  apiClient.get(`/stocks/${symbol}/history`, { params })
+
+export const getValuation = (symbol) =>
+  apiClient.get(`/stocks/${symbol}/valuation`)
+```
+---
 
 ---
+
+## Backend Route Mapping
+
+Every service file must map to a backend route module.
+
+Structure:
+
+backend/
+├── routes/
+│   ├── auth.routes.js
+│   ├── stock.routes.js
+│   ├── screener.routes.js
+│   ├── portfolio.routes.js
+│   ├── watchlist.routes.js
+│   ├── alert.routes.js
+│   ├── news.routes.js
+│   ├── mutualFund.routes.js
+│   ├── goal.routes.js
+│   ├── tax.routes.js
+│   ├── notification.routes.js
+│   ├── admin.routes.js
+│   ├── calendar.routes.js
+
+Frontend Service → Backend Feature Mapping
+
+dividendService.js     → features/dividend
+goalService.js         → features/goals
+comparisonService.js   → features/comparison
+notificationService.js → features/notification
+roleService.js         → features/role
+permissionService.js   → features/permission
+
+Mapping:
+
+authService.js → /auth
+stockService.js → /stocks
+screenerService.js → /screener
+portfolioService.js → /portfolio
+watchlistService.js → /watchlists
+alertService.js → /alerts
+newsService.js → /news
+mutualFundService.js → /mutual-funds
+goalService.js → /goals
+taxService.js → /portfolio/tax-report
+notificationService.js → /notifications
+adminService.js → /admin
+calendarService.js → /calendar
+
+
+### Additional service files:
+
+- stockService.js
+```
+stockService.getDividends(symbol)
+stockService.getShareholding(symbol)
+stockService.getEarnings(symbol)
+```
+- calendarService.js
+- ipoService.js
+- comparisonService.js
+- goalService.js
+- taxService.js
+- notificationService.js
+- adminService.js
+- alertService.js
 
 ## Auth Flow Wiring
 
@@ -109,6 +208,47 @@ export default apiClient
 
 ---
 
+---
+
+## State Management Contracts
+
+Frontend state ownership:
+
+authStore
+- accessToken
+- refreshToken
+- user
+- login()
+- logout()
+- updateTokens()
+
+screenerStore
+- filters
+- pagination
+- sorting
+- search
+- resetFilters()
+
+portfolioStore
+- holdings
+- transactions
+- performanceSummary
+
+watchlistStore
+- watchlists
+- selectedWatchlist
+- notes
+- tags
+
+notificationStore
+- unreadCount
+- notifications
+
+Rule:
+Pages should consume store actions.
+Stores call services.
+Services call apiClient.
+
 ## Stock Data Wiring
 
 ### Global Search (Topbar)
@@ -131,6 +271,15 @@ export default apiClient
   - `stockService.getStockNews(symbol, { page:1, limit:10 })` → `GET /stocks/:symbol/news`
   - `stockService.getPeers(symbol)` → `GET /stocks/:symbol/peers`
   - `stockService.getAiAnalysis(symbol)` → `GET /stocks/:symbol/analysis`
+  - `stockService.getShareholding(symbol)`
+  - `stockService.getDividends(symbol)`
+  - `stockService.getSplits(symbol)`
+  - `stockService.getCatalysts(symbol)`
+  - `stockService.getFreshness(symbol)`
+  - `stockService.getBulkDeals(symbol)`
+  - `stockService.getEarnings(symbol)`
+  - `stockService.get52WeekRange(symbol)`
+  - `stockService.getInsiderActivity(symbol)`
 
 ### Price Chart
 - On timeframe button click → `stockService.getHistory(symbol, { period, interval })`
@@ -205,10 +354,170 @@ export default apiClient
 
 ---
 
+## Shared Components Contract
+
+Reusable UI components:
+
+components/
+├── SDataTable
+├── STextField
+├── SModal
+├── SCard
+├── SChart
+├── SChip
+├── SButton
+├── SLoader
+├── SEmptyState
+
+Rules:
+
+SDataTable
+- handles pagination
+- handles sorting
+- handles debounced search
+
+STextField
+- supports debounce
+- supports validation
+
+SChart
+- accepts API-ready formatted data only
+
+SEmptyState
+- used for empty API responses
+
+SLoader
+- used for all pending API states
+
+---
+
+## Pages Wiring Contracts
+
+### Dashboard
+
+- `stockService.getTopGainers()` → `GET /stocks/movers/gainers`
+- `stockService.getTopLosers()` → `GET /stocks/movers/losers`
+- `stockService.getLiveIndices()` → `GET /stocks/indices/live`
+- `stockService.getFiiDiiActivity()` → `GET /market/fii-dii`
+- `calendarService.getEconomicPreview()` → `GET /calendar/economic?limit=5`
+- `notificationService.getPreview()` → `GET /notifications?limit=5`
+
+---
+
+### Economic Calendar
+
+- `calendarService.getEconomicEvents(filters)` → `GET /calendar/economic`
+- Filters:
+  - date
+  - impact
+  - country
+- Response:
+  `{ event_name, impact, actual, forecast, previous, event_time, affected_sectors }`
+
+---
+
+### Dividend Calendar
+
+- `dividendService.getCalendar(filters)` → `GET /stocks/dividends/calendar`
+- Filters:
+  - month
+  - year
+  - symbol
+- Sort:
+  - ex-date
+  - yield
+
+---
+
+### Earnings Calendar
+
+- `earningsService.getCalendar(filters)` → `GET /stocks/earnings/calendar`
+- Filters:
+  - sector
+  - date
+- Response:
+  `{ symbol, expected_eps, previous_eps, earnings_date, surprise_pct }`
+
+---
+
+### IPOs
+
+- `ipoService.getUpcoming()` → `GET /stocks/ipo/upcoming`
+
+---
+
+### Compare Stocks
+
+- `comparisonService.compare(symbols)` → `POST /stocks/compare`
+- Body:
+  `{ symbols: ['RELIANCE', 'TCS', 'INFY'] }`
+
+---
+
+### Goals
+
+- `goalService.getGoals()` → `GET /goals`
+- `goalService.createGoal(payload)` → `POST /goals`
+- `goalService.updateGoal(id, payload)` → `PATCH /goals/:id`
+
+---
+
+### Tax Reports
+
+- `taxService.getSummary(year)` → `GET /portfolio/tax-report?year=2026`
+- `taxService.downloadReport(year)` → `GET /portfolio/tax-report/download?year=2026`
+
+---
+
+### Alerts
+
+- `alertService.getAlerts()` → `GET /alerts`
+- `alertService.createAlert(payload)` → `POST /alerts`
+- `alertService.deleteAlert(id)` → `DELETE /alerts/:id`
+
+---
+
+### Saved Screeners
+
+- `screenerService.getSaved()` → `GET /screener/saved`
+- `screenerService.save(payload)` → `POST /screener/saved`
+- `screenerService.delete(id)` → `DELETE /screener/saved/:id`
+
+---
+
+### Admin
+
+- `adminService.getUsers()` → `GET /admin/users`
+- `adminService.getSystemHealth()` → `GET /admin/system-health`
+- `adminService.getLogs()` → `GET /admin/logs`
+- `adminService.getSyncStatus()` → `GET /admin/sync-status`
+---
+
 ## Watchlist Wiring
 
 - On load: `watchlistService.getAll()` → `GET /watchlists` → returns all watchlists with items + live prices
 - Add stock to watchlist: `POST /watchlists/:id/stocks` with `{ stock_id }`
+
+### Watchlist Notes
+- `watchlistService.addNote(id, payload)` → `POST /watchlists/:id/notes`
+- `watchlistService.getNotes(id)` → `GET /watchlists/:id/notes`
+
+Payload:
+{
+  "stock_id": "uuid",
+  "note": "Buy below 500"
+}
+
+### Watchlist Tags
+
+- `watchlistService.addTag(id, payload)` → `POST /watchlists/:id/tags`
+- `watchlistService.getTags(id)` → `GET /watchlists/:id/tags`
+
+Payload:
+{
+  "stock_id": "uuid",
+  "tag": "undervalued"
+}
 - Live prices: poll `GET /stocks/:symbol/quote` every 60s for watchlist symbols
 
 ---
@@ -218,6 +527,14 @@ export default apiClient
 - Create alert: `alertService.createAlert({ stock_id, condition, target_value })` → `POST /alerts`
 - List alerts: `GET /alerts` → show in settings or watchlist page
 - Backend Bull job checks alerts every 60s → sends email via SendGrid if triggered
+
+---
+
+## Notification Center
+
+notificationService.getNotifications()
+notificationService.markRead(id)
+notificationService.updatePreferences(payload)
 
 ---
 
